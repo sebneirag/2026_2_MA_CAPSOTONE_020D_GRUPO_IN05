@@ -25,6 +25,122 @@ if (Object.keys(permisos).length === 0) {
   }
 }
 
+// ============================================================================
+// MOTOR DE HORA OFICIAL SANTIAGO, CHILE (America/Santiago · ESCALA 24 HORAS)
+// ============================================================================
+const ZONA_HORARIA_CHILE = 'America/Santiago';
+
+function obtenerAhoraSantiago() {
+  const ahora = new Date();
+  const partes = new Intl.DateTimeFormat('en-CA', {
+    timeZone: ZONA_HORARIA_CHILE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23'
+  }).formatToParts(ahora);
+
+  const map = {};
+  partes.forEach(p => { map[p.type] = p.value; });
+
+  const diaSemanaEn = new Intl.DateTimeFormat('en-US', {
+    timeZone: ZONA_HORARIA_CHILE,
+    weekday: 'short'
+  }).format(ahora);
+
+  const mapaDias = {
+    Sun: { index: 0, nombre: 'Domingo' },
+    Mon: { index: 1, nombre: 'Lunes' },
+    Tue: { index: 2, nombre: 'Martes' },
+    Wed: { index: 3, nombre: 'Miércoles' },
+    Thu: { index: 4, nombre: 'Jueves' },
+    Fri: { index: 5, nombre: 'Viernes' },
+    Sat: { index: 6, nombre: 'Sábado' }
+  };
+
+  const infoDia = mapaDias[diaSemanaEn] || { index: ahora.getDay(), nombre: 'Lunes' };
+
+  return {
+    year: map.year,
+    month: map.month,
+    day: map.day,
+    hour: parseInt(map.hour, 10),
+    minute: parseInt(map.minute, 10),
+    second: parseInt(map.second, 10),
+    diaIndex: infoDia.index,
+    diaNombre: infoDia.nombre,
+    fechaISO: `${map.year}-${map.month}-${map.day}`,
+    fechaCL: `${map.day}/${map.month}/${map.year}`,
+    hora24: `${map.hour}:${map.minute}`,
+    hora24Seg: `${map.hour}:${map.minute}:${map.second}`,
+    fechaHora24: `${map.day}/${map.month}/${map.year} ${map.hour}:${map.minute}:${map.second}`
+  };
+}
+
+function formatearInstanteASantiago(dateObj) {
+  const partes = new Intl.DateTimeFormat('en-CA', {
+    timeZone: ZONA_HORARIA_CHILE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23'
+  }).formatToParts(dateObj);
+
+  const map = {};
+  partes.forEach(p => { map[p.type] = p.value; });
+  return `${map.day}/${map.month}/${map.year} ${map.hour}:${map.minute}:${map.second}`;
+}
+
+function formatearFechaHoraSantiago24(valorFecha) {
+  if (!valorFecha) return obtenerAhoraSantiago().fechaHora24;
+  const texto = String(valorFecha).trim();
+
+  // 1. Formato SQLite UTC "YYYY-MM-DD HH:MM:SS" -> convertir de UTC a Santiago 24h
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(texto)) {
+    const isoUtc = texto.replace(' ', 'T') + (texto.length === 16 ? ':00Z' : 'Z');
+    const d = new Date(isoUtc);
+    if (!isNaN(d.getTime())) {
+      return formatearInstanteASantiago(d);
+    }
+  }
+
+  // 2. Formato ISO con Z u offset (ej. "2026-11-19T21:14:00Z") -> Santiago 24h
+  if (/^\d{4}-\d{2}-\d{2}T/.test(texto)) {
+    const d = new Date(texto);
+    if (!isNaN(d.getTime())) {
+      return formatearInstanteASantiago(d);
+    }
+  }
+
+  // 3. Texto local DD/MM/YYYY o DD-MM-YYYY -> normalizar a escala 24h (00:00 - 23:59)
+  const matchLocal = texto.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})[,\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(a\.?\s*m\.?|p\.?\s*m\.?|am|pm)?/i);
+  if (matchLocal) {
+    const dd = matchLocal[1].padStart(2, '0');
+    const mm = matchLocal[2].padStart(2, '0');
+    const yyyy = matchLocal[3];
+    let hh = parseInt(matchLocal[4], 10);
+    const min = matchLocal[5];
+    const seg = matchLocal[6] || '00';
+    const mer = (matchLocal[7] || '').toLowerCase().replace(/[\s\.]/g, '');
+
+    if (mer === 'pm' && hh < 12) hh += 12;
+    if (mer === 'am' && hh === 12) hh = 0;
+
+    return `${dd}/${mm}/${yyyy} ${String(hh).padStart(2, '0')}:${min}:${seg}`;
+  }
+
+  return texto;
+}
+
+// ============================================================================
+// SINCRONIZACIÓN LITERAL EN TIEMPO REAL (SSE + CANAL LOCAL + POLLING 1.5s)
+// ============================================================================
 let listaPersonalCache = [];
 let filtroTurnoActual = 'todos';
 
@@ -33,15 +149,79 @@ let cacheCategorias = [];
 let cacheSupervision = null;
 let cacheConsumo = null;
 
+let firmaUltimaActividad = null;
+let primeraCargaActividad = true;
+let sincronizandoAhora = false;
+
+const canalLocalRT = ('BroadcastChannel' in window) ? new BroadcastChannel('clinica_vital_realtime') : null;
+if (canalLocalRT) {
+  canalLocalRT.onmessage = (event) => {
+    if (event.data && event.data.tipo) {
+      sincronizarTodoEnVivo(true);
+    }
+  };
+}
+
+function emitirEventoLocalRT(tipo) {
+  if (canalLocalRT) {
+    canalLocalRT.postMessage({ tipo, ts: Date.now() });
+  }
+}
+
+function conectarSSEConReintento() {
+  try {
+    const sse = new EventSource('/api/stream');
+    sse.onmessage = () => {
+      sincronizarTodoEnVivo(true);
+    };
+    sse.onerror = () => {
+      sse.close();
+      setTimeout(conectarSSEConReintento, 4000);
+    };
+  } catch (e) {
+    // Respaldo continuo activo mediante polling cada 1.5s
+  }
+}
+
+function iniciarConexionTiempoReal() {
+  conectarSSEConReintento();
+
+  // Polling continuo de alta frecuencia (cada 1.5 segundos) para sincronizar entre distintos navegadores/equipos
+  setInterval(() => {
+    sincronizarTodoEnVivo(true);
+  }, 1500);
+}
+
+async function sincronizarTodoEnVivo(silencioso = true) {
+  if (sincronizandoAhora) return;
+  sincronizandoAhora = true;
+  try {
+    await cargarInventario();
+    await cargarPersonalTiempoReal();
+
+    if (permisos.supervision) {
+      await Promise.all([
+        cargarActividadReciente(!silencioso || true),
+        cargarSupervision(),
+        cargarReporteSemanal()
+      ]);
+    }
+  } finally {
+    sincronizandoAhora = false;
+  }
+}
+
+async function sincronizarManualmente() {
+  await sincronizarTodoEnVivo(false);
+  const st = obtenerAhoraSantiago();
+  mostrarToast(`🔄 Sincronizado al instante (${st.hora24Seg} hrs · Santiago)`, 'primary');
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   aplicarTemaYPermisos();
+  iniciarRelojTurnos();
   cargarInventario();
   cargarPersonalTiempoReal();
-  iniciarRelojTurnos();
-
-  setInterval(() => {
-    cargarPersonalTiempoReal();
-  }, 15000);
 
   if (permisos.pacientes) {
     cargarPacientes();
@@ -51,16 +231,11 @@ document.addEventListener('DOMContentLoaded', () => {
     cargarReporteSemanal();
     cargarSupervision();
     cargarUsuarios();
-    cargarActividadReciente();
+    cargarActividadReciente(false);
     comprobarAlertasStockAdmin();
-
-    setInterval(() => {
-      cargarInventario();
-      cargarSupervision();
-      cargarReporteSemanal();
-      cargarActividadReciente();
-    }, 15000);
   }
+
+  iniciarConexionTiempoReal();
 });
 
 document.getElementById('btn-logout').addEventListener('click', () => {
@@ -74,7 +249,7 @@ function mostrarToast(mensaje, tipo = 'dark') {
   if (!toastEl || !toastBody) return;
   toastEl.className = `toast align-items-center text-bg-${tipo} border-0 rounded-3 shadow`;
   toastBody.textContent = mensaje;
-  bootstrap.Toast.getOrCreateInstance(toastEl, { delay: 3500 }).show();
+  bootstrap.Toast.getOrCreateInstance(toastEl, { delay: 4500 }).show();
 }
 
 // ============================================================================
@@ -90,7 +265,7 @@ function aplicarTemaYPermisos() {
   if (temaVisual === 'admin') {
     lblRol.textContent = `🛡️ Dirección y Supervisión · ${userName}`;
     heroTitulo.textContent = `Panel Ejecutivo — ${userName}`;
-    heroSub.textContent = 'Control integral de inventario, finanzas ($ CLP), gestión de personal, turnos y monitoreo remoto en tiempo real.';
+    heroSub.textContent = 'Control integral de inventario, finanzas ($ CLP), gestión de personal, turnos y monitoreo en tiempo real.';
   } else if (temaVisual === 'aa') {
     lblRol.textContent = `🧼 Aseo e Higiene · ${userName}`;
     heroTitulo.textContent = `Área de Higiene y Apoyo Operativo — ${userName}`;
@@ -128,7 +303,7 @@ function aplicarTemaYPermisos() {
 }
 
 // ============================================================================
-// 2. DESCARGA DIRECTA DE ARCHIVO .CSV (SIN ABRIR VENTANAS NI VISTAS PREVIAS)
+// 2. DESCARGA DIRECTA DE ARCHIVO .CSV
 // ============================================================================
 function descargarArchivoCSV(filasMatriz, nombreArchivo) {
   const csvContenido = filasMatriz
@@ -260,7 +435,7 @@ function descargarFaltantesCSV() {
       ]);
     });
   }
-  const fecha = new Date().toISOString().slice(0, 10);
+  const fecha = obtenerAhoraSantiago().fechaISO;
   descargarArchivoCSV(matriz, `Faltantes_Clinica_Vital_${fecha}.csv`);
 }
 
@@ -356,19 +531,23 @@ function descargarCategoriasCSV() {
       r.costo_consumo_semanal
     ]);
   });
-  const fecha = new Date().toISOString().slice(0, 10);
+  const fecha = obtenerAhoraSantiago().fechaISO;
   descargarArchivoCSV(matriz, `Categorias_Clinica_Vital_${fecha}.csv`);
 }
 
 // ============================================================================
-// 4. MÓDULO DE TURNOS DINÁMICOS (HOY EN VIVO + PROYECCIÓN MAÑANA + GESTIÓN ADMIN)
+// 4. MÓDULO DE TURNOS DINÁMICOS (HORARIO SANTIAGO 24H)
 // ============================================================================
 function iniciarRelojTurnos() {
   const actualizarReloj = () => {
+    const st = obtenerAhoraSantiago();
     const relojEl = document.getElementById('reloj-vivo-turnos');
     if (relojEl) {
-      const ahora = new Date();
-      relojEl.textContent = ahora.toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      relojEl.textContent = `${st.hora24Seg} hrs · Santiago`;
+    }
+    const relojNav = document.getElementById('reloj-navbar-santiago');
+    if (relojNav) {
+      relojNav.textContent = `🇨🇱 ${st.hora24Seg} hrs`;
     }
   };
   actualizarReloj();
@@ -407,7 +586,11 @@ function filtrarTurnosHoy(filtro, btnEl) {
 async function cargarPersonalTiempoReal() {
   try {
     const res = await fetch('/api/personal');
-    listaPersonalCache = await res.json();
+    const nuevos = await res.json();
+    if (JSON.stringify(nuevos) === JSON.stringify(listaPersonalCache) && listaPersonalCache.length > 0) {
+      return;
+    }
+    listaPersonalCache = nuevos;
     renderizarTurnosHoyYManana();
   } catch (error) {
     console.error('Error cargando personal:', error);
@@ -416,17 +599,25 @@ async function cargarPersonalTiempoReal() {
 
 function renderizarTurnosHoyYManana() {
   const diasSemana = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
-  const ahora = new Date();
-  const hoyIndex = ahora.getDay();
+  const st = obtenerAhoraSantiago();
+  const hoyIndex = st.diaIndex;
   const mananaIndex = (hoyIndex + 1) % 7;
 
   const diaHoy = diasSemana[hoyIndex];
   const diaManana = diasSemana[mananaIndex];
 
-  const fechaHoyStr = ahora.toLocaleDateString('es-CL', { day: 'numeric', month: 'long' });
-  const mananaDate = new Date(ahora);
-  mananaDate.setDate(ahora.getDate() + 1);
-  const fechaMananaStr = mananaDate.toLocaleDateString('es-CL', { day: 'numeric', month: 'long' });
+  const mananaDate = new Date(Date.now() + 86400000);
+  const fechaMananaStr = new Intl.DateTimeFormat('es-CL', {
+    timeZone: ZONA_HORARIA_CHILE,
+    day: 'numeric',
+    month: 'long'
+  }).format(mananaDate);
+
+  const fechaHoyStr = new Intl.DateTimeFormat('es-CL', {
+    timeZone: ZONA_HORARIA_CHILE,
+    day: 'numeric',
+    month: 'long'
+  }).format(new Date());
 
   const lblDia = document.getElementById('lbl-dia-actual');
   const lblManana = document.getElementById('lbl-dia-manana');
@@ -440,7 +631,7 @@ function renderizarTurnosHoyYManana() {
   gridHoy.innerHTML = '';
   gridManana.innerHTML = '';
 
-  const minutosAhora = ahora.getHours() * 60 + ahora.getMinutes();
+  const minutosAhora = st.hour * 60 + st.minute;
 
   let countTodos = listaPersonalCache.length;
   let countActivos = 0;
@@ -483,7 +674,7 @@ function renderizarTurnosHoyYManana() {
       </div>
     ` : '';
 
-    const delay = (idx * 0.07).toFixed(2);
+    const delay = (idx * 0.05).toFixed(2);
     gridHoy.innerHTML += `
       <div class="col-md-6 col-lg-4">
         <div class="shift-card ${cardClass} h-100" style="animation-delay: ${delay}s;">
@@ -539,7 +730,7 @@ function renderizarTurnosHoyYManana() {
         ? '<span class="badge bg-info-subtle text-info-emphasis border border-info-subtle">🔄 Continuidad</span>'
         : '<span class="badge bg-primary text-white">✨ Relevo Entrante</span>';
 
-      const delay = (idx * 0.08).toFixed(2);
+      const delay = (idx * 0.05).toFixed(2);
       gridManana.innerHTML += `
         <div class="col-md-6 col-lg-4">
           <div class="shift-card tomorrow-card h-100" style="animation-delay: ${delay}s;">
@@ -673,6 +864,7 @@ document.getElementById('form-gestion-turno')?.addEventListener('submit', async 
   if (data.success) {
     bootstrap.Modal.getInstance(document.getElementById('modalGestionTurno')).hide();
     await cargarPersonalTiempoReal();
+    emitirEventoLocalRT('turno');
     mostrarToast(id ? '✅ Turno actualizado en tiempo real.' : '✅ Nuevo funcionario agregado al calendario de turnos.', 'success');
   }
 });
@@ -683,6 +875,7 @@ async function eliminarTurno(id, nombre) {
     const data = await res.json();
     if (data.success) {
       await cargarPersonalTiempoReal();
+      emitirEventoLocalRT('turno');
       mostrarToast(`🗑️ Turno de ${nombre} eliminado.`, 'warning');
     }
   }
@@ -776,24 +969,26 @@ async function usarUnidad(id, stockActual, nombreProducto) {
   }
 
   const responsableRegistro = `${userName} (${userCargo})`;
+  const st = obtenerAhoraSantiago();
 
   try {
     const res = await fetch('/api/inventario/usar', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, cantidad: 1, usuario: responsableRegistro })
+      body: JSON.stringify({
+        id,
+        cantidad: 1,
+        usuario: responsableRegistro,
+        fecha_chile: st.fechaHora24
+      })
     });
     
     const data = await res.json();
     
     if (data.success) {
-      mostrarToast(`✅ Descontado: ${nombreProducto} (Restante: ${data.stockRestante})`, 'success');
-      cargarInventario();
-      if (permisos.supervision) {
-        cargarReporteSemanal();
-        cargarSupervision();
-        cargarActividadReciente();
-      }
+      mostrarToast(`✅ Descontado (${st.hora24} hrs): ${nombreProducto} (Restante: ${data.stockRestante})`, 'success');
+      emitirEventoLocalRT('consumo');
+      await sincronizarTodoEnVivo(true);
     } else if (data.error) {
       alert(`⚠️ ${data.error}`);
     }
@@ -932,7 +1127,7 @@ async function eliminarPaciente(id, nombre) {
 }
 
 // ============================================================================
-// 7. SUPERVISIÓN, GESTIÓN DE USUARIOS (CREAR/ELIMINAR) Y ACTIVIDAD REMOTA
+// 7. SUPERVISIÓN, GESTIÓN DE USUARIOS (CREAR/ELIMINAR) Y ACTIVIDAD REMOTA EN VIVO
 // ============================================================================
 async function comprobarAlertasStockAdmin() {
   if (!permisos.supervision) return;
@@ -1030,7 +1225,7 @@ function descargarSupervisionCSV() {
   });
   matriz.push([]);
   matriz.push(['RESUMEN EJECUTIVO', 'Monto Total Consumido (A Cobrar)', cacheSupervision.resumen.gastoTotalConsumo, 'Presupuesto Reposición', cacheSupervision.resumen.presupuestoTotal]);
-  const fecha = new Date().toISOString().slice(0, 10);
+  const fecha = obtenerAhoraSantiago().fechaISO;
   descargarArchivoCSV(matriz, `Supervision_Clinica_Vital_${fecha}.csv`);
 }
 
@@ -1147,25 +1342,40 @@ async function eliminarUsuario(id, nombreCompleto) {
   }
 }
 
-async function cargarActividadReciente() {
+async function cargarActividadReciente(notificarSiHayNuevo = true) {
   if (!permisos.supervision) return;
   try {
     const res = await fetch('/api/actividad/reciente');
     const logs = await res.json();
     const tbody = document.getElementById('tabla-actividad-remota-body');
     if (!tbody) return;
-    tbody.innerHTML = '';
 
     if (logs.length === 0) {
       tbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted py-3">Aún no se registran movimientos en esta sesión.</td></tr>`;
       return;
     }
 
-    logs.forEach(l => {
+    const masReciente = logs[0];
+    const nuevaFirma = `${masReciente.id || ''}|${masReciente.fecha_local}|${masReciente.usuario}|${masReciente.producto_nombre}|${masReciente.cantidad}`;
+    const hayNuevoMovimiento = !primeraCargaActividad && firmaUltimaActividad !== null && firmaUltimaActividad !== nuevaFirma;
+
+    if (hayNuevoMovimiento && notificarSiHayNuevo) {
+      const horaChile = formatearFechaHoraSantiago24(masReciente.fecha_local);
+      mostrarToast(`📡 Consumo en vivo: ${masReciente.usuario} descontó ${masReciente.cantidad} ${masReciente.producto_nombre} (${horaChile} hrs)`, 'info');
+    }
+
+    firmaUltimaActividad = nuevaFirma;
+    primeraCargaActividad = false;
+
+    tbody.innerHTML = '';
+    logs.forEach((l, idx) => {
       const unidad = l.categoria === 'medicamento' ? 'caja' : 'unidad';
+      const fechaChile24 = formatearFechaHoraSantiago24(l.fecha_local);
+      const claseFila = (idx === 0 && hayNuevoMovimiento) ? 'fila-nueva-highlight' : '';
+
       tbody.innerHTML += `
-        <tr>
-          <td class="text-secondary font-monospace">${l.fecha_local}</td>
+        <tr class="${claseFila}">
+          <td class="text-secondary font-monospace fw-semibold">${fechaChile24} hrs</td>
           <td class="fw-bold text-primary">${l.usuario}</td>
           <td><span class="badge bg-light text-dark border text-capitalize">${l.categoria}</span></td>
           <td class="fw-semibold text-dark">${l.producto_nombre}</td>
@@ -1193,9 +1403,10 @@ async function cargarMensajesTens() {
     }
 
     mensajes.forEach(m => {
+      const fechaChile24 = formatearFechaHoraSantiago24(m.fecha_local || m.fecha);
       tbody.innerHTML += `
         <tr>
-          <td class="text-secondary">${m.fecha_local || m.fecha}</td>
+          <td class="text-secondary font-monospace">${fechaChile24} hrs</td>
           <td><span class="badge bg-warning text-dark">${m.tipo}</span></td>
           <td class="text-dark">${m.mensaje}</td>
           <td class="text-primary fw-bold">${m.usuario}</td>
@@ -1211,17 +1422,24 @@ document.getElementById('form-mensaje-tens')?.addEventListener('submit', async (
   e.preventDefault();
   const tipo = document.getElementById('tens-msg-tipo').value;
   const mensaje = document.getElementById('tens-msg-texto').value;
+  const st = obtenerAhoraSantiago();
 
   const res = await fetch('/api/mensajes', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ tipo, mensaje, usuario: `${userName} (${userCargo})` })
+    body: JSON.stringify({
+      tipo,
+      mensaje,
+      usuario: `${userName} (${userCargo})`,
+      fecha_chile: st.fechaHora24
+    })
   });
 
   const data = await res.json();
   if (data.success) {
     document.getElementById('tens-msg-texto').value = '';
     bootstrap.Modal.getInstance(document.getElementById('modalMensajeTens')).hide();
+    emitirEventoLocalRT('mensaje');
     mostrarToast('📩 Aviso enviado exitosamente a Jefatura.', 'success');
     if (permisos.supervision) cargarMensajesTens();
   }
@@ -1249,6 +1467,7 @@ async function cargarReporteSemanal() {
 
     data.detalles.forEach(h => {
       const unidad = h.categoria === 'medicamento' ? 'cajas' : 'unidades';
+      const ultimaFecha24 = h.ultima_fecha ? `${formatearFechaHoraSantiago24(h.ultima_fecha)} hrs` : 'Reciente';
       tbody.innerHTML += `
         <tr>
           <td class="fw-bold text-dark">${h.producto_nombre}</td>
@@ -1257,7 +1476,7 @@ async function cargarReporteSemanal() {
           <td class="fw-bold text-warning-emphasis">${h.total_consumido} ${unidad}</td>
           <td>$${h.precio_unitario.toLocaleString('es-CL')} CLP</td>
           <td class="fw-bold text-primary">$${h.costo_total_consumo.toLocaleString('es-CL')} CLP</td>
-          <td class="small text-secondary">${h.ultima_fecha || 'Reciente'}</td>
+          <td class="small text-secondary font-monospace">${ultimaFecha24}</td>
         </tr>
       `;
     });
@@ -1269,7 +1488,7 @@ async function cargarReporteSemanal() {
 function descargarConsumoCSV() {
   if (!cacheConsumo) return;
   const matriz = [
-    ['Producto', 'Categoría', 'Funcionario Responsable', 'Total Consumido Semanal', 'Precio Unitario ($ CLP)', 'Costo Consumido ($ CLP)', 'Última Fecha Registro']
+    ['Producto', 'Categoría', 'Funcionario Responsable', 'Total Consumido Semanal', 'Precio Unitario ($ CLP)', 'Costo Consumido ($ CLP)', 'Última Fecha Registro (Santiago 24h)']
   ];
   if (cacheConsumo.detalles.length === 0) {
     matriz.push(['Sin registros', '-', '-', 0, 0, 0, '-']);
@@ -1282,13 +1501,13 @@ function descargarConsumoCSV() {
         r.total_consumido,
         r.precio_unitario,
         r.costo_total_consumo,
-        r.ultima_fecha || ''
+        r.ultima_fecha ? formatearFechaHoraSantiago24(r.ultima_fecha) : ''
       ]);
     });
   }
   matriz.push([]);
   matriz.push(['MONTO TOTAL REAL CONSUMIDO A COBRAR ($ CLP)', cacheConsumo.gastoTotalSemanal]);
-  const fecha = new Date().toISOString().slice(0, 10);
+  const fecha = obtenerAhoraSantiago().fechaISO;
   descargarArchivoCSV(matriz, `Consumo_Semanal_Clinica_Vital_${fecha}.csv`);
 }
 
@@ -1352,8 +1571,8 @@ document.getElementById('form-med')?.addEventListener('submit', async (e) => {
   const data = await res.json();
   if (data.success) {
     bootstrap.Modal.getInstance(document.getElementById('modalAgregarMedicamento')).hide();
-    cargarInventario();
-    if (permisos.supervision) cargarSupervision();
+    emitirEventoLocalRT('stock');
+    await sincronizarTodoEnVivo(true);
     mostrarToast(`💊 Stock actualizado: ${nombre}`, 'success');
   }
 });
@@ -1377,8 +1596,8 @@ document.getElementById('form-aseo')?.addEventListener('submit', async (e) => {
   const data = await res.json();
   if (data.success) {
     bootstrap.Modal.getInstance(document.getElementById('modalAgregarAseo')).hide();
-    cargarInventario();
-    if (permisos.supervision) cargarSupervision();
+    emitirEventoLocalRT('stock');
+    await sincronizarTodoEnVivo(true);
     mostrarToast(`🧼 Stock actualizado: ${nombre}`, 'success');
   }
 });

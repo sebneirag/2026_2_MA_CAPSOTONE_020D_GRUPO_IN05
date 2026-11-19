@@ -178,7 +178,7 @@
       color: #ffffff;
     }
 
-    .btn-download-report {
+    .btn-descarga-csv {
       background: linear-gradient(135deg, #16a34a 0%, #15803d 100%);
       border: none;
       color: #ffffff;
@@ -188,7 +188,7 @@
       transition: all 0.2s ease;
     }
 
-    .btn-download-report:hover {
+    .btn-descarga-csv:hover {
       background: linear-gradient(135deg, #15803d 0%, #166534 100%);
       transform: translateY(-1px);
       color: #ffffff;
@@ -268,6 +268,16 @@
       100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
     }
 
+    .fila-nueva-highlight {
+      animation: flashRow 3s ease;
+    }
+
+    @keyframes flashRow {
+      0% { background-color: #bbf7d0; }
+      50% { background-color: #dcfce7; }
+      100% { background-color: transparent; }
+    }
+
     .avatar-circle {
       width: 44px;
       height: 44px;
@@ -309,11 +319,15 @@
       </div>
 
       <div class="d-flex flex-wrap align-items-center gap-2 mt-2 mt-lg-0">
+        <span id="reloj-navbar-santiago" class="badge bg-light text-dark border font-monospace px-2 py-2" title="Horario Oficial Santiago, Chile (Escala 24h)">
+          🇨🇱 --:--:-- hrs
+        </span>
+
         <div class="dropdown">
           <button class="btn btn-light border fw-semibold btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown">
-            📑 Informes y Reportes
+            📑 Informes (Descargar)
           </button>
-          <ul class="dropdown-menu dropdown-menu-end shadow-sm border-0 rounded-3 p-2" style="min-width: 300px;">
+          <ul class="dropdown-menu dropdown-menu-end shadow-sm border-0 rounded-3 p-2" style="min-width: 290px;">
             <li>
               <button class="dropdown-item rounded-2 py-2 d-flex justify-content-between align-items-center" onclick="abrirReporteFaltantes()">
                 <span>🚨 Productos Faltantes / Críticos</span>
@@ -330,7 +344,7 @@
             <li class="supervision-only">
               <button class="dropdown-item rounded-2 py-2 d-flex justify-content-between align-items-center text-success fw-semibold" data-bs-toggle="modal" data-bs-target="#modalReporte">
                 <span>📊 Consumo Semanal Valorizado</span>
-                <span class="kbd-shortcut">Alt + R</span>
+                <span class="kbd-shortcut">.CSV</span>
               </button>
             </li>
           </ul>
@@ -480,10 +494,10 @@
                 <span class="badge bg-success-subtle text-success border border-success-subtle px-3 py-1 rounded-pill fw-bold">
                   <span class="pulse-dot"></span>MONITOR EN VIVO
                 </span>
-                <span id="reloj-vivo-turnos" class="badge bg-light text-dark border font-monospace px-3 py-1">--:--:--</span>
+                <span id="reloj-vivo-turnos" class="badge bg-light text-dark border font-monospace px-3 py-1">--:--:-- hrs · Santiago</span>
               </div>
               <h4 class="text-dark fw-bold mb-0">🕒 Personal de Turno Hoy — <span id="lbl-dia-actual" class="text-primary">Cargando...</span></h4>
-              <small class="text-secondary">Detección automática de jornada laboral activa y bloques de colación en curso</small>
+              <small class="text-secondary">Detección automática de jornada laboral activa y bloques de colación (Horario Santiago 24h)</small>
             </div>
 
             <div class="d-flex flex-wrap align-items-center gap-2">
@@ -498,9 +512,7 @@
             </div>
           </div>
 
-          <div class="row g-3" id="grid-personal-hoy">
-            <!-- Tarjetas dinámicas animadas cargadas por app.js -->
-          </div>
+          <div class="row g-3" id="grid-personal-hoy"></div>
         </div>
 
         <!-- Bloque 2: Proyección del Día Siguiente (Relevos de Mañana) -->
@@ -516,9 +528,7 @@
             </span>
           </div>
 
-          <div class="row g-3" id="grid-personal-manana">
-            <!-- Tarjetas dinámicas del día siguiente cargadas por app.js -->
-          </div>
+          <div class="row g-3" id="grid-personal-manana"></div>
         </div>
 
       </div>
@@ -539,9 +549,7 @@
             </button>
           </div>
 
-          <div class="row g-4" id="pacientes-container">
-            <!-- Cargado dinámicamente -->
-          </div>
+          <div class="row g-4" id="pacientes-container"></div>
         </div>
       </div>
 
@@ -601,7 +609,7 @@
           </div>
         </div>
         <div class="modal-footer bg-light rounded-bottom-4 d-flex justify-content-between">
-          <button class="btn btn-download-report btn-sm px-4 py-2" onclick="descargarFaltantesCSV()">
+          <button class="btn btn-descarga-csv btn-sm px-4 py-2" onclick="descargarFaltantesCSV()">
             📥 Descargar Informe (.csv)
           </button>
           <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cerrar</button>
@@ -645,7 +653,7 @@
           </div>
         </div>
         <div class="modal-footer bg-light rounded-bottom-4 d-flex justify-content-between">
-          <button class="btn btn-download-report btn-sm px-4 py-2" onclick="descargarCategoriasCSV()">
+          <button class="btn btn-descarga-csv btn-sm px-4 py-2" onclick="descargarCategoriasCSV()">
             📥 Descargar Informe (.csv)
           </button>
           <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cerrar</button>
@@ -706,7 +714,7 @@
         <div class="modal-header text-white rounded-top-4" style="background: var(--role-gradient);">
           <div>
             <h5 class="modal-title fw-bold mb-0">🛡️ Panel Ejecutivo de Supervisión, Cobros, Turnos y Usuarios</h5>
-            <small class="opacity-75">Monitoreo remoto en tiempo real de consumos, órdenes de compra, horarios y permisos de personal</small>
+            <small class="opacity-75">Monitoreo en tiempo real (Horario Santiago 24h) de consumos, órdenes de compra, horarios y permisos</small>
           </div>
           <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
         </div>
@@ -784,7 +792,7 @@
                 <table class="table table-sm mb-0 small bg-white">
                   <thead>
                     <tr>
-                      <th>Fecha</th>
+                      <th>Fecha y Hora (24h)</th>
                       <th>Tipo</th>
                       <th>Mensaje / Sugerencia</th>
                       <th>Funcionario</th>
@@ -954,12 +962,17 @@
 
             <!-- SUB-PESTAÑA D: MONITOREO REMOTO EN TIEMPO REAL -->
             <div class="tab-pane fade" id="pane-super-remoto" role="tabpanel">
-              <div class="d-flex justify-content-between align-items-center mb-3">
+              <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
                 <div>
-                  <h6 class="fw-bold text-dark mb-0">📡 Bitácora Remota de Consumos en Tiempo Real</h6>
-                  <small class="text-secondary">Cada descuento realizado por cualquier TENS o auxiliar se refleja automáticamente aquí.</small>
+                  <div class="d-flex align-items-center gap-2">
+                    <h6 class="fw-bold text-dark mb-0">📡 Bitácora Remota de Consumos en Tiempo Real</h6>
+                    <span id="badge-estado-realtime" class="badge bg-success-subtle text-success border border-success-subtle">
+                      <span class="pulse-dot"></span>En Vivo · Santiago (24h)
+                    </span>
+                  </div>
+                  <small class="text-secondary">Cada descuento realizado por cualquier TENS o auxiliar aparece automáticamente al instante.</small>
                 </div>
-                <button class="btn btn-outline-primary btn-sm fw-semibold" onclick="cargarActividadReciente()">
+                <button class="btn btn-outline-primary btn-sm fw-semibold" onclick="sincronizarManualmente()">
                   🔄 Sincronizar Ahora
                 </button>
               </div>
@@ -968,7 +981,7 @@
                 <table class="table table-clinic align-middle small mb-0">
                   <thead>
                     <tr>
-                      <th>Fecha y Hora</th>
+                      <th>Fecha y Hora (24h)</th>
                       <th>Funcionario Responsable</th>
                       <th>Categoría</th>
                       <th>Producto Consumido</th>
@@ -983,7 +996,7 @@
 
         </div>
         <div class="modal-footer bg-light rounded-bottom-4 d-flex justify-content-between">
-          <button class="btn btn-download-report btn-sm px-4 py-2" onclick="descargarSupervisionCSV()">
+          <button class="btn btn-descarga-csv btn-sm px-4 py-2" onclick="descargarSupervisionCSV()">
             📥 Descargar Informe (.csv)
           </button>
           <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cerrar</button>
@@ -1130,7 +1143,7 @@
                   <th>Total Consumido</th>
                   <th>Precio Unitario</th>
                   <th>Costo Consumido (Cobro)</th>
-                  <th>Último Registro</th>
+                  <th>Último Registro (24h)</th>
                 </tr>
               </thead>
               <tbody id="tabla-reporte-body"></tbody>
@@ -1142,7 +1155,7 @@
           </div>
         </div>
         <div class="modal-footer bg-light rounded-bottom-4 d-flex justify-content-between">
-          <button class="btn btn-download-report btn-sm px-4 py-2" onclick="descargarConsumoCSV()">
+          <button class="btn btn-descarga-csv btn-sm px-4 py-2" onclick="descargarConsumoCSV()">
             📥 Descargar Informe (.csv)
           </button>
           <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cerrar</button>

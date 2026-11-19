@@ -1,173 +1,232 @@
+process.env.TZ = 'America/Santiago';
+
 const express = require('express');
 const path = require('path');
-const os = require('os');
-const cors = require('cors');
+const fs = require('fs');
+
+let sqlite3 = null;
+let DatabaseSync = null;
+let motorBD = 'sqlite3';
+
+try {
+  sqlite3 = require('sqlite3').verbose();
+} catch (err) {
+  ({ DatabaseSync } = require('node:sqlite'));
+  motorBD = 'node:sqlite (integrado)';
+}
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-function getLocalIpAddress() {
-  const interfaces = os.networkInterfaces();
-  for (const name of Object.keys(interfaces)) {
-    const nameLower = name.toLowerCase();
-    if (nameLower.includes('virtual') || nameLower.includes('vbox') || nameLower.includes('vethernet') || nameLower.includes('docker') || nameLower.includes('wsl')) continue;
-    for (const iface of interfaces[name]) {
-      if (iface.family === 'IPv4' && !iface.internal) return iface.address;
+// ============================================================================
+// 1. MOTOR DE HORA OFICIAL SANTIAGO, CHILE (America/Santiago · ESCALA 24 HORAS)
+// ============================================================================
+const ZONA_HORARIA_CHILE = 'America/Santiago';
+
+function obtenerAhoraChile(dateObj = new Date()) {
+  const partes = new Intl.DateTimeFormat('en-CA', {
+    timeZone: ZONA_HORARIA_CHILE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23'
+  }).formatToParts(dateObj);
+
+  const m = {};
+  partes.forEach(p => { m[p.type] = p.value; });
+
+  return {
+    fechaCL: `${m.day}/${m.month}/${m.year}`,
+    hora24: `${m.hour}:${m.minute}:${m.second}`,
+    fechaHora24: `${m.day}/${m.month}/${m.year} ${m.hour}:${m.minute}:${m.second}`,
+    fechaISO: `${m.year}-${m.month}-${m.day} ${m.hour}:${m.minute}:${m.second}`
+  };
+}
+
+function normalizarFechaChile24(valor) {
+  if (!valor) return obtenerAhoraChile().fechaHora24;
+  const texto = String(valor).trim();
+
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(texto)) {
+    const isoUtc = texto.replace(' ', 'T') + (texto.length === 16 ? ':00Z' : 'Z');
+    const d = new Date(isoUtc);
+    if (!isNaN(d.getTime())) {
+      return obtenerAhoraChile(d).fechaHora24;
     }
   }
-  return 'localhost';
+
+  if (/^\d{4}-\d{2}-\d{2}T/.test(texto)) {
+    const d = new Date(texto);
+    if (!isNaN(d.getTime())) {
+      return obtenerAhoraChile(d).fechaHora24;
+    }
+  }
+
+  const match = texto.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})[,\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(a\.?\s*m\.?|p\.?\s*m\.?|am|pm)?/i);
+  if (match) {
+    const dd = match[1].padStart(2, '0');
+    const mm = match[2].padStart(2, '0');
+    const yyyy = match[3];
+    let hh = parseInt(match[4], 10);
+    const min = match[5];
+    const seg = match[6] || '00';
+    const mer = (match[7] || '').toLowerCase().replace(/[\s\.]/g, '');
+
+    if (mer === 'pm' && hh < 12) hh += 12;
+    if (mer === 'am' && hh === 12) hh = 0;
+
+    return `${dd}/${mm}/${yyyy} ${String(hh).padStart(2, '0')}:${min}:${seg}`;
+  }
+
+  return texto;
 }
 
-const LOCAL_IP = getLocalIpAddress();
+// ============================================================================
+// 2. CANAL DE TRANSMISIÓN EN TIEMPO REAL (SERVER-SENT EVENTS - SSE)
+// ============================================================================
+const clientesSSE = new Set();
 
-// ============================================================================
-// CONEXIÓN DUAL A SQLITE (Render Cloud + Motor Nativo Node.js v26 Local)
-// ============================================================================
-let db;
-try {
-  const sqlite3 = require('sqlite3').verbose();
-  db = new sqlite3.Database('./clinica_vital.db', (err) => {
-    if (err) {
-      console.error('Error SQLite:', err.message);
-    } else {
-      console.log('Base de datos clinica_vital.db conectada correctamente.');
-      inicializarBD();
+function emitirCambioTiempoReal(tipo = 'actualizacion', detalle = {}) {
+  const payload = JSON.stringify({
+    tipo,
+    detalle,
+    hora_santiago: obtenerAhoraChile().fechaHora24,
+    ts: Date.now()
+  });
+
+  clientesSSE.forEach(res => {
+    try {
+      res.write(`data: ${payload}\n\n`);
+    } catch (e) {
+      clientesSSE.delete(res);
     }
   });
-} catch (e) {
-  const { DatabaseSync } = require('node:sqlite');
-  const ndb = new DatabaseSync('./clinica_vital.db');
-  db = {
-    run(sql, params, cb) {
-      if (typeof params === 'function') { cb = params; params = []; }
-      try {
-        const info = ndb.prepare(sql).run(...(params || []));
-        if (cb) cb.call({ lastID: Number(info.lastInsertRowid || 0), changes: Number(info.changes || 0) }, null);
-      } catch (err) {
-        if (cb) cb(err);
-      }
-    },
-    get(sql, params, cb) {
-      if (typeof params === 'function') { cb = params; params = []; }
-      try {
-        const row = ndb.prepare(sql).get(...(params || []));
-        if (cb) cb(null, row);
-      } catch (err) {
-        if (cb) cb(err, null);
-      }
-    },
-    all(sql, params, cb) {
-      if (typeof params === 'function') { cb = params; params = []; }
-      try {
-        const rows = ndb.prepare(sql).all(...(params || []));
-        if (cb) cb(null, rows);
-      } catch (err) {
-        if (cb) cb(err, []);
-      }
-    },
-    prepare(sql) {
-      const stmt = ndb.prepare(sql);
-      return {
-        run(...args) {
-          const cb = typeof args[args.length - 1] === 'function' ? args.pop() : null;
-          try {
-            const info = stmt.run(...args);
-            if (cb) cb.call({ lastID: Number(info.lastInsertRowid || 0) }, null);
-          } catch (err) {
-            if (cb) cb(err);
-          }
-        },
-        finalize(cb) { if (cb) cb(null); }
-      };
-    }
-  };
-  console.log('Base de datos clinica_vital.db conectada (Motor Nativo Node 26).');
-  setImmediate(inicializarBD);
 }
 
-function inicializarBD() {
-  // 1. Tabla Usuarios y Permisos Granulares (Controlada por Administrador)
-  db.run(`
+setInterval(() => {
+  clientesSSE.forEach(res => {
+    try {
+      res.write(': heartbeat\n\n');
+    } catch (e) {
+      clientesSSE.delete(res);
+    }
+  });
+}, 25000);
+
+app.get('/api/stream', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  if (typeof res.flushHeaders === 'function') res.flushHeaders();
+
+  res.write(`data: ${JSON.stringify({ tipo: 'conectado', hora_santiago: obtenerAhoraChile().fechaHora24 })}\n\n`);
+  clientesSSE.add(res);
+
+  req.on('close', () => {
+    clientesSSE.delete(res);
+  });
+});
+
+// ============================================================================
+// 3. BASE DE DATOS SQLITE (INICIA LIMPIA Y SIN ALERTAS NI CONSUMOS PREVIOS)
+// ============================================================================
+const nombreArchivoBD = fs.existsSync(path.join(__dirname, 'database.db')) ? 'database.db' : 'clinica.db';
+const rutaBD = path.join(__dirname, nombreArchivoBD);
+
+const db = sqlite3 ? new sqlite3.Database(rutaBD) : null;
+const dbNativa = !sqlite3 ? new DatabaseSync(rutaBD) : null;
+
+function runAsync(sql, params = []) {
+  if (db) {
+    return new Promise((resolve, reject) => {
+      db.run(sql, params, function (err) {
+        if (err) reject(err);
+        else resolve(this);
+      });
+    });
+  }
+  return Promise.resolve(dbNativa.prepare(sql).run(...params));
+}
+
+function getAsync(sql, params = []) {
+  if (db) {
+    return new Promise((resolve, reject) => {
+      db.get(sql, params, (err, row) => {
+        if (err) reject(err);
+        else resolve(row);
+      });
+    });
+  }
+  return Promise.resolve(dbNativa.prepare(sql).get(...params));
+}
+
+function allAsync(sql, params = []) {
+  if (db) {
+    return new Promise((resolve, reject) => {
+      db.all(sql, params, (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows);
+      });
+    });
+  }
+  return Promise.resolve(dbNativa.prepare(sql).all(...params));
+}
+
+async function inicializarBaseDatos() {
+  await runAsync(`
     CREATE TABLE IF NOT EXISTS usuarios (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      nombre_completo TEXT NOT NULL,
       username TEXT UNIQUE NOT NULL,
       password TEXT NOT NULL,
-      nombre_completo TEXT NOT NULL,
-      cargo TEXT NOT NULL,
-      tema_visual TEXT NOT NULL DEFAULT 'tens',
-      perm_medicamentos INTEGER DEFAULT 0,
+      cargo TEXT DEFAULT 'Personal Clínico',
+      tema_visual TEXT DEFAULT 'tens',
+      perm_medicamentos INTEGER DEFAULT 1,
       perm_aseo INTEGER DEFAULT 0,
-      perm_pacientes INTEGER DEFAULT 0,
+      perm_pacientes INTEGER DEFAULT 1,
       perm_editar_pacientes INTEGER DEFAULT 0,
       perm_agregar_stock INTEGER DEFAULT 0,
       perm_supervision INTEGER DEFAULT 0,
-      es_sistema INTEGER DEFAULT 0,
-      fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      es_sistema INTEGER DEFAULT 0
     )
-  `, () => {
-    db.get('SELECT COUNT(*) as total FROM usuarios', (err, row) => {
-      if (row && row.total === 0) {
-        const stmt = db.prepare(`
-          INSERT INTO usuarios 
-          (username, password, nombre_completo, cargo, tema_visual, perm_medicamentos, perm_aseo, perm_pacientes, perm_editar_pacientes, perm_agregar_stock, perm_supervision, es_sistema)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `);
-        stmt.run('admin', 'admin123', 'Administrador General', 'Dirección y Supervisión', 'admin', 1, 1, 1, 1, 1, 1, 1);
-        stmt.run('tens', 'tens123', 'TENS 1 (Enfermería)', 'TENS de Turno Clínico', 'tens', 1, 0, 1, 0, 0, 0, 0);
-        stmt.run('AA', 'AA123', 'TENS AA (Aseo y Apoyo)', 'Auxiliar de Aseo y Apoyo', 'aa', 0, 1, 0, 0, 0, 0, 0);
-        stmt.finalize();
-        console.log('Usuarios iniciales creados en base de datos.');
-      }
-    });
-  });
+  `);
 
-  // 2. Tabla Inventario
-  db.run(`
+  await runAsync(`
     CREATE TABLE IF NOT EXISTS inventario (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       nombre TEXT NOT NULL,
-      stock INTEGER NOT NULL DEFAULT 0,
       categoria TEXT NOT NULL,
-      pauta TEXT,
-      precio_unitario REAL DEFAULT 0,
+      stock INTEGER DEFAULT 0,
       stock_minimo INTEGER DEFAULT 10,
-      stock_maximo INTEGER DEFAULT 20,
       prioridad TEXT DEFAULT 'Media',
+      pauta TEXT DEFAULT '',
+      precio_unitario INTEGER DEFAULT 5000,
       es_sos INTEGER DEFAULT 0
     )
-  `, () => {
-    db.get('SELECT COUNT(*) as total FROM inventario', (err, row) => {
-      if (row && row.total === 0) {
-        const stmt = db.prepare(`
-          INSERT INTO inventario 
-          (nombre, stock, categoria, pauta, precio_unitario, stock_minimo, stock_maximo, prioridad, es_sos) 
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `);
-        
-        stmt.run('Sertralina 50mg', 15, 'medicamento', 'Mañana: 1, Tarde: 0, Noche: 1 (sueño), SOS: 1', 8500, 10, 20, 'Media', 0);
-        stmt.run('Fluoxetina 20mg', 15, 'medicamento', 'Mañana: 1, Tarde: 1, Noche: 0, SOS: 0', 7200, 10, 20, 'Media', 0);
-        stmt.run('Clonazepam 2mg (SOS)', 15, 'medicamento', 'Mañana: 0, Tarde: 0, Noche: 1 (sueño), SOS: 1 (Crisis)', 12000, 10, 25, 'Alta', 1);
-        stmt.run('Quetiapina 100mg (SOS)', 15, 'medicamento', 'Mañana: 0, Tarde: 0, Noche: 1 (sueño), SOS: 1 (Crisis)', 15500, 10, 25, 'Alta', 1);
-        stmt.run('Escitalopram 10mg', 15, 'medicamento', 'Mañana: 1, Tarde: 0, Noche: 0, SOS: 0', 9800, 10, 20, 'Media', 0);
+  `);
 
-        stmt.run('Cloro Concentrado 5L', 15, 'aseo', 'Desinfección general e higienización', 4500, 10, 20, 'Alta', 0);
-        stmt.run('Detergente Clínico Multiuso', 14, 'aseo', 'Lavado de ropa de cama y uniformes', 8900, 8, 18, 'Alta', 0);
-        stmt.run('Clorhexidina Jabón 1L', 14, 'aseo', 'Higiene antiséptica de personal y residentes', 11000, 8, 18, 'Alta', 0);
-        stmt.run('Bolsas Basura Amarillas (Residuos)', 15, 'aseo', 'Gestión de residuos clínicos', 6000, 6, 15, 'Media', 0);
-        stmt.run('Jabón Antiséptico 1L', 13, 'aseo', 'Higiene de manos y sanitización', 5500, 6, 15, 'Media', 0);
-        stmt.run('Toallas de Papel (Paquete 8 rollos)', 13, 'aseo', 'Secado e higiene rápida', 4200, 4, 12, 'Baja', 0);
+  await runAsync(`
+    CREATE TABLE IF NOT EXISTS consumos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      producto_id INTEGER,
+      producto_nombre TEXT NOT NULL,
+      categoria TEXT NOT NULL,
+      cantidad INTEGER DEFAULT 1,
+      precio_unitario INTEGER DEFAULT 0,
+      usuario TEXT NOT NULL,
+      fecha_local TEXT NOT NULL,
+      fecha_iso TEXT NOT NULL
+    )
+  `);
 
-        stmt.finalize();
-      }
-    });
-  });
-
-  // 3. Tabla Personal y Turnos
-  db.run(`
+  await runAsync(`
     CREATE TABLE IF NOT EXISTS personal (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       nombre TEXT NOT NULL,
@@ -175,562 +234,653 @@ function inicializarBD() {
       area TEXT NOT NULL,
       horario TEXT NOT NULL,
       colacion TEXT NOT NULL,
-      dias TEXT NOT NULL,
-      estado TEXT DEFAULT 'En Turno'
-    )
-  `, () => {
-    db.get('SELECT COUNT(*) as total FROM personal', (err, row) => {
-      if (row && row.total === 0) {
-        const stmt = db.prepare('INSERT INTO personal (nombre, rol, area, horario, colacion, dias, estado) VALUES (?, ?, ?, ?, ?, ?, ?)');
-        stmt.run('María González Tapia', 'TENS de Turno', 'Enfermería y Fármacos', '08:00 - 20:00 hrs', '13:30 - 14:30 hrs', 'Lunes, Miércoles, Viernes, Domingo', 'En Turno');
-        stmt.run('Camila Valenzuela P.', 'TENS de Apoyo', 'Enfermería y Residencia', '08:00 - 20:00 hrs', '14:30 - 15:30 hrs', 'Martes, Jueves, Sábado', 'En Turno');
-        stmt.run('Juan Pérez Morales', 'Auxiliar de Aseo', 'Aseo e Higiene', '07:30 - 16:30 hrs', '12:30 - 13:30 hrs', 'Lunes, Martes, Miércoles, Jueves, Viernes', 'En Turno');
-        stmt.run('Rosa Espinoza Soto', 'Cocinera Principal', 'Cocina y Nutrición', '07:00 - 16:00 hrs', '12:00 - 13:00 hrs', 'Todos los días', 'En Turno');
-        stmt.run('Dr. Carlos Silva R.', 'Jefe de Turno', 'Jefatura y Supervisión', '08:00 - 18:00 hrs', '14:00 - 15:00 hrs', 'Lunes, Martes, Miércoles, Jueves, Viernes', 'En Turno');
-        stmt.finalize();
-      }
-    });
-  });
-
-  // 4. Tabla Historial de Consumo
-  db.run(`
-    CREATE TABLE IF NOT EXISTS historial_consumo (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      producto_nombre TEXT NOT NULL,
-      categoria TEXT NOT NULL,
-      cantidad INTEGER NOT NULL,
-      usuario TEXT NOT NULL,
-      fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      dias TEXT NOT NULL
     )
   `);
 
-  // 5. Tabla Mensajes TENS
-  db.run(`
-    CREATE TABLE IF NOT EXISTS mensajes_tens (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      tipo TEXT NOT NULL,
-      mensaje TEXT NOT NULL,
-      usuario TEXT NOT NULL,
-      fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      leido INTEGER DEFAULT 0
-    )
-  `);
-
-  // 6. Tabla Pacientes
-  db.run(`
+  await runAsync(`
     CREATE TABLE IF NOT EXISTS pacientes (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       nombre TEXT NOT NULL,
       rut TEXT NOT NULL,
       edad INTEGER NOT NULL,
       diagnostico TEXT NOT NULL,
-      imagen_ficha TEXT DEFAULT 'ficha1.png',
-      fecha_ingreso TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      imagen_ficha TEXT DEFAULT 'ficha1.png'
     )
-  `, () => {
-    db.run("ALTER TABLE pacientes ADD COLUMN imagen_ficha TEXT DEFAULT 'ficha1.png'", () => {});
+  `);
 
-    db.get('SELECT COUNT(*) as total FROM pacientes', (err, row) => {
-      if (row && row.total === 0) {
-        const stmt = db.prepare('INSERT INTO pacientes (nombre, rut, edad, diagnostico, imagen_ficha) VALUES (?, ?, ?, ?, ?)');
-        stmt.run('Camila Soto Morales', '18.452.120-K', 16, 'Trastorno Depresivo Mayor', 'ficha1.png');
-        stmt.run('Valentina Morales Rojas', '19.821.433-2', 17, 'Trastorno Bipolar T-1', 'ficha2.png');
-        stmt.run('Sofía Henríquez Silva', '20.123.456-7', 15, 'Trastorno Ansioso Depresivo', 'ficha3.png');
-        stmt.run('Isidora Tapia Fuentes', '21.987.654-3', 16, 'Trastorno Adaptativo Severo', 'ficha4.png');
-        stmt.finalize();
-        console.log('4 Pacientes iniciales creadas en base de datos.');
-      }
-    });
-  });
+  await runAsync(`
+    CREATE TABLE IF NOT EXISTS mensajes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      tipo TEXT NOT NULL,
+      mensaje TEXT NOT NULL,
+      usuario TEXT NOT NULL,
+      fecha_local TEXT NOT NULL
+    )
+  `);
+
+  const alteraciones = [
+    "ALTER TABLE usuarios ADD COLUMN cargo TEXT DEFAULT 'Personal Clínico'",
+    "ALTER TABLE usuarios ADD COLUMN tema_visual TEXT DEFAULT 'tens'",
+    "ALTER TABLE usuarios ADD COLUMN perm_medicamentos INTEGER DEFAULT 1",
+    "ALTER TABLE usuarios ADD COLUMN perm_aseo INTEGER DEFAULT 0",
+    "ALTER TABLE usuarios ADD COLUMN perm_pacientes INTEGER DEFAULT 1",
+    "ALTER TABLE usuarios ADD COLUMN perm_editar_pacientes INTEGER DEFAULT 0",
+    "ALTER TABLE usuarios ADD COLUMN perm_agregar_stock INTEGER DEFAULT 0",
+    "ALTER TABLE usuarios ADD COLUMN perm_supervision INTEGER DEFAULT 0",
+    "ALTER TABLE usuarios ADD COLUMN es_sistema INTEGER DEFAULT 0",
+    "ALTER TABLE inventario ADD COLUMN prioridad TEXT DEFAULT 'Media'",
+    "ALTER TABLE inventario ADD COLUMN precio_unitario INTEGER DEFAULT 5000",
+    "ALTER TABLE inventario ADD COLUMN es_sos INTEGER DEFAULT 0",
+    "ALTER TABLE consumos ADD COLUMN fecha_iso TEXT DEFAULT ''"
+  ];
+
+  for (const sql of alteraciones) {
+    try {
+      await runAsync(sql);
+    } catch (e) {
+      // Ignorar si ya existe
+    }
+  }
+
+  // 1. Cuentas base del sistema (solo si la tabla usuarios está vacía)
+  const totalUsuarios = await getAsync('SELECT COUNT(*) AS total FROM usuarios');
+  if (!totalUsuarios || totalUsuarios.total === 0) {
+    await runAsync(
+      `INSERT INTO usuarios (nombre_completo, username, password, cargo, tema_visual, perm_medicamentos, perm_aseo, perm_pacientes, perm_editar_pacientes, perm_agregar_stock, perm_supervision, es_sistema)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ['Dirección y Supervisión Clínica', 'admin', 'admin123', 'Administrador General', 'admin', 1, 1, 1, 1, 1, 1, 1]
+    );
+    await runAsync(
+      `INSERT INTO usuarios (nombre_completo, username, password, cargo, tema_visual, perm_medicamentos, perm_aseo, perm_pacientes, perm_editar_pacientes, perm_agregar_stock, perm_supervision, es_sistema)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ['Camila Rojas (TENS)', 'tens', 'tens123', 'TENS Enfermería', 'tens', 1, 0, 1, 0, 0, 0, 1]
+    );
+    await runAsync(
+      `INSERT INTO usuarios (nombre_completo, username, password, cargo, tema_visual, perm_medicamentos, perm_aseo, perm_pacientes, perm_editar_pacientes, perm_agregar_stock, perm_supervision, es_sistema)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ['María José Soto (Auxiliar)', 'AA', 'aseo123', 'Auxiliar de Aseo', 'aa', 0, 1, 0, 0, 0, 0, 1]
+    );
+  }
+
+  // 2. Inventario base completo y con stock saludable (sobre el mínimo para iniciar sin alertas)
+  const totalInv = await getAsync('SELECT COUNT(*) AS total FROM inventario');
+  if (!totalInv || totalInv.total === 0) {
+    const insumosIniciales = [
+      ['Sertralina 50 mg (Caja 30 comp.)', 'medicamento', 15, 10, 'Alta', 'Mañana: 1 comp. post desayuno', 9800, 0],
+      ['Fluoxetina 20 mg (Caja 30 comp.)', 'medicamento', 15, 10, 'Alta', 'Mañana: 1 comp. 08:30 hrs', 8500, 0],
+      ['Quetiapina 25 mg (Caja 30 comp.)', 'medicamento', 15, 10, 'Alta', 'Noche: 1 comp. 21:00 hrs (inducción sueño)', 11200, 0],
+      ['Clonazepam 0.5 mg (Caja 30 comp.)', 'medicamento', 15, 10, 'Alta', 'SOS: 1 comp. sublingual bajo indicación médica', 7900, 1],
+      ['Cloro Gel Desinfectante 5L', 'aseo', 12, 8, 'Alta', 'Desinfección de baños y superficies clínicas', 6500, 0],
+      ['Amonio Cuaternario 5L', 'aseo', 12, 8, 'Alta', 'Sanitización profunda de habitaciones y salas', 12900, 0],
+      ['Alcohol Gel Clínico 1L', 'aseo', 10, 6, 'Media', 'Dispensadores de pasillos y estación enfermería', 4800, 0],
+      ['Bolsas de Basura Clínicas 80x110 (Rollo)', 'aseo', 8, 4, 'Baja', 'Retiro diario de residuos domiciliarios y clínicos', 3900, 0]
+    ];
+
+    for (const item of insumosIniciales) {
+      await runAsync(
+        `INSERT INTO inventario (nombre, categoria, stock, stock_minimo, prioridad, pauta, precio_unitario, es_sos)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        item
+      );
+    }
+  }
+
+  // 3. Turnos base del personal
+  const totalPersonal = await getAsync('SELECT COUNT(*) AS total FROM personal');
+  if (!totalPersonal || totalPersonal.total === 0) {
+    const turnosIniciales = [
+      ['Camila Rojas (TENS)', 'TENS Enfermería Diurna', 'Enfermería y Fármacos', '08:00 - 20:00 hrs', '13:30 - 14:30 hrs', 'Lunes, Martes, Miércoles, Jueves, Viernes'],
+      ['Valentina Paredes (TENS)', 'TENS Enfermería Relevo', 'Enfermería y Residencia', '08:00 - 20:00 hrs', '14:00 - 15:00 hrs', 'Sábado, Domingo'],
+      ['María José Soto', 'Auxiliar de Aseo', 'Aseo e Higiene', '08:30 - 17:30 hrs', '13:00 - 14:00 hrs', 'Lunes, Martes, Miércoles, Jueves, Viernes, Sábado'],
+      ['Dirección Clínica Vital', 'Supervisión General', 'Jefatura y Supervisión', '09:00 - 18:30 hrs', '13:30 - 14:30 hrs', 'Todos los días']
+    ];
+
+    for (const t of turnosIniciales) {
+      await runAsync(
+        `INSERT INTO personal (nombre, rol, area, horario, colacion, dias) VALUES (?, ?, ?, ?, ?, ?)`,
+        t
+      );
+    }
+  }
+
+  // 4. Residentes base
+  const totalPacientes = await getAsync('SELECT COUNT(*) AS total FROM pacientes');
+  if (!totalPacientes || totalPacientes.total === 0) {
+    await runAsync(
+      `INSERT INTO pacientes (nombre, rut, edad, diagnostico, imagen_ficha) VALUES (?, ?, ?, ?, ?)`,
+      ['Antonia Valdivia Muñoz', '21.845.320-4', 15, 'Trastorno Depresivo Mayor en Tratamiento', 'ficha1.png']
+    );
+    await runAsync(
+      `INSERT INTO pacientes (nombre, rut, edad, diagnostico, imagen_ficha) VALUES (?, ?, ?, ?, ?)`,
+      ['Isidora Carrasco Pérez', '22.104.892-K', 14, 'Trastorno de Ansiedad Generalizada', 'ficha2.png']
+    );
+  }
 }
 
-// Configuración IP
-app.get('/api/config', (req, res) => {
-  res.json({ ip: LOCAL_IP, port: PORT });
-});
-
 // ============================================================================
-// AUTENTICACIÓN Y GESTIÓN DE USUARIOS / PERMISOS POR ADMINISTRADOR
+// 4. RUTAS DE AUTENTICACIÓN Y GESTIÓN DE USUARIOS
 // ============================================================================
-app.post('/api/login', (req, res) => {
-  const { username, password } = req.body;
-  if (!username || !password) {
-    return res.status(400).json({ success: false, message: 'Ingrese usuario y contraseña.' });
-  }
+app.post('/api/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    if (!username || !password) {
+      return res.status(400).json({ success: false, error: 'Ingrese usuario y contraseña.' });
+    }
 
-  db.get(
-    'SELECT * FROM usuarios WHERE LOWER(TRIM(username)) = LOWER(TRIM(?)) AND password = ?',
-    [username, password],
-    (err, user) => {
-      if (err) return res.status(500).json({ success: false, message: 'Error interno del servidor.' });
-      if (!user) {
-        return res.status(401).json({ success: false, message: 'Credenciales incorrectas o usuario revocado.' });
+    const user = await getAsync(
+      'SELECT * FROM usuarios WHERE LOWER(username) = LOWER(?) AND password = ?',
+      [username.trim(), password.trim()]
+    );
+
+    if (!user) {
+      return res.status(401).json({ success: false, error: 'Usuario o contraseña incorrectos.' });
+    }
+
+    res.json({
+      success: true,
+      username: user.nombre_completo,
+      userKey: user.username,
+      role: user.perm_supervision ? 'admin' : 'usuario',
+      cargo: user.cargo || 'Personal Clínico',
+      temaVisual: user.tema_visual || 'tens',
+      permisos: {
+        medicamentos: Boolean(user.perm_medicamentos),
+        aseo: Boolean(user.perm_aseo),
+        pacientes: Boolean(user.perm_pacientes),
+        editar_pacientes: Boolean(user.perm_editar_pacientes),
+        agregar_stock: Boolean(user.perm_agregar_stock),
+        supervision: Boolean(user.perm_supervision)
       }
-
-      const roleGeneral = user.perm_supervision === 1 ? 'admin' : 'usuario';
-      res.json({
-        success: true,
-        id: user.id,
-        role: roleGeneral,
-        userKey: user.username,
-        nombreUsuario: user.nombre_completo,
-        cargo: user.cargo,
-        temaVisual: user.tema_visual || 'tens',
-        permisos: {
-          medicamentos: user.perm_medicamentos === 1,
-          aseo: user.perm_aseo === 1,
-          pacientes: user.perm_pacientes === 1,
-          editar_pacientes: user.perm_editar_pacientes === 1,
-          agregar_stock: user.perm_agregar_stock === 1,
-          supervision: user.perm_supervision === 1
-        }
-      });
-    }
-  );
-});
-
-app.get('/api/usuarios', (req, res) => {
-  db.all(
-    `SELECT id, username, nombre_completo, cargo, tema_visual,
-            perm_medicamentos, perm_aseo, perm_pacientes,
-            perm_editar_pacientes, perm_agregar_stock, perm_supervision,
-            es_sistema, datetime(fecha_creacion, 'localtime') as fecha_creacion
-     FROM usuarios ORDER BY es_sistema DESC, id ASC`,
-    [],
-    (err, rows) => {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json(rows);
-    }
-  );
-});
-
-app.post('/api/usuarios', (req, res) => {
-  const {
-    username,
-    password,
-    nombre_completo,
-    cargo,
-    tema_visual,
-    perm_medicamentos,
-    perm_aseo,
-    perm_pacientes,
-    perm_editar_pacientes,
-    perm_agregar_stock,
-    perm_supervision
-  } = req.body;
-
-  if (!username || !password || !nombre_completo) {
-    return res.status(400).json({ error: 'Usuario, contraseña y nombre completo son obligatorios.' });
+    });
+  } catch (error) {
+    console.error('Error en /api/login:', error);
+    res.status(500).json({ success: false, error: 'Error interno al iniciar sesión.' });
   }
+});
 
-  const userClean = username.trim();
-  const temaClean = ['admin', 'tens', 'aa'].includes(tema_visual) ? tema_visual : 'tens';
+app.get('/api/usuarios', async (req, res) => {
+  try {
+    const rows = await allAsync(
+      `SELECT id, nombre_completo, username, cargo, tema_visual,
+              perm_medicamentos, perm_aseo, perm_pacientes,
+              perm_editar_pacientes, perm_agregar_stock, perm_supervision, es_sistema
+       FROM usuarios ORDER BY es_sistema DESC, id ASC`
+    );
+    res.json(rows);
+  } catch (error) {
+    res.status(500).json({ error: 'Error al obtener usuarios.' });
+  }
+});
 
-  db.get('SELECT id FROM usuarios WHERE LOWER(TRIM(username)) = LOWER(?)', [userClean], (err, existing) => {
-    if (err) return res.status(500).json({ error: err.message });
-    if (existing) {
-      return res.status(400).json({ error: `El nombre de usuario "${userClean}" ya existe en el sistema.` });
+app.post('/api/usuarios', async (req, res) => {
+  try {
+    const {
+      nombre_completo,
+      username,
+      password,
+      cargo,
+      tema_visual,
+      perm_medicamentos,
+      perm_aseo,
+      perm_pacientes,
+      perm_editar_pacientes,
+      perm_agregar_stock,
+      perm_supervision
+    } = req.body;
+
+    if (!nombre_completo || !username || !password) {
+      return res.status(400).json({ success: false, error: 'Complete todos los campos obligatorios.' });
     }
 
-    db.run(
-      `INSERT INTO usuarios 
-       (username, password, nombre_completo, cargo, tema_visual, perm_medicamentos, perm_aseo, perm_pacientes, perm_editar_pacientes, perm_agregar_stock, perm_supervision, es_sistema)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+    const existe = await getAsync('SELECT id FROM usuarios WHERE LOWER(username) = LOWER(?)', [username.trim()]);
+    if (existe) {
+      return res.status(400).json({ success: false, error: `El usuario "${username}" ya existe.` });
+    }
+
+    await runAsync(
+      `INSERT INTO usuarios (
+        nombre_completo, username, password, cargo, tema_visual,
+        perm_medicamentos, perm_aseo, perm_pacientes,
+        perm_editar_pacientes, perm_agregar_stock, perm_supervision, es_sistema
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
       [
-        userClean,
-        password.trim(),
         nombre_completo.trim(),
+        username.trim(),
+        password.trim(),
         (cargo || 'Personal Clínico').trim(),
-        temaClean,
+        tema_visual || 'tens',
         perm_medicamentos ? 1 : 0,
         perm_aseo ? 1 : 0,
         perm_pacientes ? 1 : 0,
         perm_editar_pacientes ? 1 : 0,
         perm_agregar_stock ? 1 : 0,
         perm_supervision ? 1 : 0
-      ],
-      function(err) {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json({ success: true, id: this.lastID });
-      }
+      ]
     );
-  });
-});
 
-app.delete('/api/usuarios/:id', (req, res) => {
-  const { id } = req.params;
-  db.get('SELECT * FROM usuarios WHERE id = ?', [id], (err, user) => {
-    if (err || !user) return res.status(404).json({ error: 'Usuario no encontrado.' });
-    if (user.es_sistema === 1) {
-      return res.status(403).json({ error: 'No se puede eliminar la cuenta raíz de Administrador del sistema.' });
-    }
-
-    db.run('DELETE FROM usuarios WHERE id = ?', [id], function(err) {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ success: true });
-    });
-  });
-});
-
-// ============================================================================
-// APIs PACIENTES (CRUD) Y VISTA MÓVIL QR (/ficha/:id)
-// ============================================================================
-app.get('/api/pacientes', (req, res) => {
-  db.all('SELECT * FROM pacientes ORDER BY id ASC', [], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(rows);
-  });
-});
-
-app.post('/api/pacientes', (req, res) => {
-  const { nombre, rut, edad, diagnostico, imagen_ficha } = req.body;
-  if (!nombre || !rut || !edad) {
-    return res.status(400).json({ error: 'Faltan datos obligatorios del residente.' });
-  }
-
-  const imgFinal = (imagen_ficha && imagen_ficha.trim()) ? imagen_ficha.trim() : 'ficha1.png';
-
-  db.run(
-    'INSERT INTO pacientes (nombre, rut, edad, diagnostico, imagen_ficha) VALUES (?, ?, ?, ?, ?)',
-    [nombre.trim(), rut.trim(), parseInt(edad, 10), (diagnostico || 'Evaluación General').trim(), imgFinal],
-    function(err) {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ success: true, id: this.lastID });
-    }
-  );
-});
-
-app.put('/api/pacientes/:id', (req, res) => {
-  const { id } = req.params;
-  const { nombre, rut, edad, diagnostico, imagen_ficha } = req.body;
-  const imgFinal = (imagen_ficha && imagen_ficha.trim()) ? imagen_ficha.trim() : 'ficha1.png';
-
-  db.run(
-    'UPDATE pacientes SET nombre = ?, rut = ?, edad = ?, diagnostico = ?, imagen_ficha = ? WHERE id = ?',
-    [nombre.trim(), rut.trim(), parseInt(edad, 10), (diagnostico || 'Evaluación General').trim(), imgFinal, id],
-    function(err) {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ success: true });
-    }
-  );
-});
-
-app.delete('/api/pacientes/:id', (req, res) => {
-  const { id } = req.params;
-  db.run('DELETE FROM pacientes WHERE id = ?', [id], function(err) {
-    if (err) return res.status(500).json({ error: err.message });
+    emitirCambioTiempoReal('usuario');
     res.json({ success: true });
-  });
+  } catch (error) {
+    console.error('Error creando usuario:', error);
+    res.status(500).json({ success: false, error: 'No se pudo crear el usuario.' });
+  }
 });
 
-app.get('/ficha/:id', (req, res) => {
-  const id = req.params.id;
-  db.get('SELECT * FROM pacientes WHERE id = ?', [id], (err, paciente) => {
-    if (err || !paciente) {
-      return res.status(404).send(`
-        <!DOCTYPE html>
-        <html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Ficha No Encontrada - Clínica Vital SpA</title>
-        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-        </head><body style="background:#f8fafc;color:#0f172a;" class="d-flex align-items-center justify-content-center min-vh-100 p-4">
-          <div class="bg-white border rounded-4 shadow-sm p-5 text-center" style="max-width:480px;">
-            <div class="fs-1 mb-2">⚠️</div>
-            <h3 class="fw-bold text-danger">Ficha Clínica No Encontrada</h3>
-            <p class="text-secondary mb-0">El código QR escaneado no pertenece a una residente activa o ha sido dada de alta del sistema.</p>
-          </div>
-        </body></html>
-      `);
+app.delete('/api/usuarios/:id', async (req, res) => {
+  try {
+    const user = await getAsync('SELECT es_sistema FROM usuarios WHERE id = ?', [req.params.id]);
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'Usuario no encontrado.' });
+    }
+    if (user.es_sistema === 1) {
+      return res.status(403).json({ success: false, error: 'No se puede eliminar una cuenta raíz del sistema.' });
     }
 
-    const archivoImagen = paciente.imagen_ficha ? paciente.imagen_ficha : 'ficha1.png';
-    const rutaImagen = `/images/${archivoImagen}`;
-
-    const html = `
-      <!DOCTYPE html>
-      <html lang="es">
-      <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Ficha Clínica Digital - ${paciente.nombre}</title>
-        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-        <style>
-          body { background: linear-gradient(135deg, #f0f9ff 0%, #f8fafc 100%); color: #0f172a; padding: 16px; font-family: system-ui, -apple-system, sans-serif; }
-          .card-ficha { background-color: #ffffff; border: 1px solid #e2e8f0; border-top: 5px solid #0284c7; border-radius: 18px; padding: 24px; margin: 0 auto; max-width: 680px; }
-          .badge-clinica { background-color: #e0f2fe; color: #0369a1; font-size: 0.82rem; padding: 6px 14px; border-radius: 20px; font-weight: 700; border: 1px solid #bae6fd; }
-          .data-strip { background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px 16px; }
-          .img-ficha { width: 100%; border-radius: 12px; border: 1px solid #cbd5e1; background-color: #ffffff; }
-        </style>
-      </head>
-      <body>
-        <div class="container my-2">
-          <div class="card-ficha shadow-sm">
-            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-              <span class="badge-clinica">🏥 CLÍNICA VITAL SpA — FICHA CLÍNICA DIGITAL</span>
-              <span class="badge bg-success-subtle text-success border border-success-subtle px-3 py-2 rounded-pill">● Residente Activa</span>
-            </div>
-
-            <h3 class="fw-bold text-dark mb-2">${paciente.nombre}</h3>
-            <div class="data-strip mb-3 d-flex flex-wrap gap-3 small">
-              <div><span class="text-secondary">RUT:</span> <strong class="text-dark">${paciente.rut}</strong></div>
-              <div><span class="text-secondary">Edad:</span> <strong class="text-primary">${paciente.edad} Años</strong></div>
-              <div><span class="text-secondary">Diagnóstico:</span> <strong class="text-danger">${paciente.diagnostico}</strong></div>
-            </div>
-
-            <div class="mb-4 text-center">
-              <img src="${rutaImagen}" onerror="this.src='/images/ficha1.png'" class="img-ficha shadow-sm" alt="Ficha Clínica de ${paciente.nombre}">
-            </div>
-
-            <div class="row g-2">
-              <div class="col-6">
-                <a href="${rutaImagen}" download="${paciente.nombre.replace(/\s+/g, '_')}_Ficha.png" class="btn btn-primary w-100 fw-bold py-2 shadow-sm">
-                  📥 Descargar Ficha
-                </a>
-              </div>
-              <div class="col-6">
-                <a href="${rutaImagen}" target="_blank" class="btn btn-outline-primary w-100 fw-bold py-2">
-                  🔍 Ver Imagen HD
-                </a>
-              </div>
-            </div>
-
-            <div class="mt-2 text-center">
-              <button onclick="window.print()" class="btn btn-light border text-secondary btn-sm w-100 py-2">🖨️ Imprimir Documento Clínico</button>
-            </div>
-          </div>
-        </div>
-      </body>
-      </html>
-    `;
-    res.send(html);
-  });
+    await runAsync('DELETE FROM usuarios WHERE id = ?', [req.params.id]);
+    emitirCambioTiempoReal('usuario');
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Error al eliminar usuario.' });
+  }
 });
 
 // ============================================================================
-// APIs INVENTARIO, SUPERVISIÓN, REPORTES Y MONITOREO REMOTO EN TIEMPO REAL
+// 5. RUTAS DE INVENTARIO Y CONSUMO EN TIEMPO REAL
 // ============================================================================
-app.get('/api/inventario', (req, res) => {
-  db.all('SELECT * FROM inventario ORDER BY id ASC', [], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
+app.get('/api/inventario', async (req, res) => {
+  try {
+    const rows = await allAsync('SELECT * FROM inventario ORDER BY categoria DESC, nombre ASC');
     res.json(rows);
-  });
+  } catch (error) {
+    res.status(500).json({ error: 'Error al obtener inventario.' });
+  }
 });
 
-app.post('/api/inventario/usar', (req, res) => {
-  const { id, cantidad, usuario } = req.body;
-  const cantNum = parseInt(cantidad, 10) || 1;
-  const user = usuario || 'Usuario TENS';
+app.post('/api/inventario/usar', async (req, res) => {
+  try {
+    const { id, cantidad = 1, usuario = 'Personal Clínico', fecha_chile } = req.body;
+    const cant = parseInt(cantidad, 10) || 1;
 
-  db.get('SELECT * FROM inventario WHERE id = ?', [id], (err, producto) => {
-    if (err || !producto) return res.status(404).json({ error: 'Producto no encontrado' });
-
-    if (producto.stock <= 0 || producto.stock < cantNum) {
-      return res.status(400).json({ error: 'Debe reponer stock. El producto se encuentra agotado.' });
+    const item = await getAsync('SELECT * FROM inventario WHERE id = ?', [id]);
+    if (!item) {
+      return res.status(404).json({ success: false, error: 'Producto no encontrado.' });
     }
 
-    db.run('UPDATE inventario SET stock = stock - ? WHERE id = ?', [cantNum, id], function(err) {
-      if (err) return res.status(500).json({ error: err.message });
+    if (item.stock < cant) {
+      return res.status(400).json({ success: false, error: 'Stock insuficiente. Debe reponer este insumo.' });
+    }
 
-      db.run(
-        'INSERT INTO historial_consumo (producto_nombre, categoria, cantidad, usuario) VALUES (?, ?, ?, ?)',
-        [producto.nombre.trim(), producto.categoria, cantNum, user],
-        () => res.json({ success: true, stockRestante: producto.stock - cantNum })
-      );
+    const nuevoStock = item.stock - cant;
+    const ahoraChile = obtenerAhoraChile();
+    const fechaRegistro24 = fecha_chile ? normalizarFechaChile24(fecha_chile) : ahoraChile.fechaHora24;
+
+    await runAsync('UPDATE inventario SET stock = ? WHERE id = ?', [nuevoStock, id]);
+
+    await runAsync(
+      `INSERT INTO consumos (producto_id, producto_nombre, categoria, cantidad, precio_unitario, usuario, fecha_local, fecha_iso)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [item.id, item.nombre, item.categoria, cant, item.precio_unitario || 0, usuario, fechaRegistro24, ahoraChile.fechaISO]
+    );
+
+    emitirCambioTiempoReal('consumo', {
+      producto: item.nombre,
+      usuario,
+      cantidad: cant,
+      stockRestante: nuevoStock,
+      fecha: fechaRegistro24
     });
-  });
+
+    res.json({ success: true, stockRestante: nuevoStock, fecha: fechaRegistro24 });
+  } catch (error) {
+    console.error('Error al descontar inventario:', error);
+    res.status(500).json({ success: false, error: 'Error al registrar el consumo.' });
+  }
 });
 
-app.post('/api/inventario/agregar', (req, res) => {
-  const { nombre, cantidad, categoria, pauta, precio_unitario, stock_minimo, stock_maximo, prioridad, es_sos } = req.body;
-  const nomLimpio = (nombre || '').trim();
-  const cantNum = parseInt(cantidad, 10) || 1;
-  const precio = parseFloat(precio_unitario) || 5000;
-  
-  const defaultMin = categoria === 'medicamento' ? 10 : (prioridad === 'Alta' ? 8 : prioridad === 'Media' ? 6 : 4);
-  const defaultMax = categoria === 'medicamento' ? 20 : 15;
-  const minStock = parseInt(stock_minimo, 10) || defaultMin;
-  const maxStock = parseInt(stock_maximo, 10) || defaultMax;
+app.post('/api/inventario/agregar', async (req, res) => {
+  try {
+    const { nombre, cantidad, categoria, pauta, precio_unitario } = req.body;
+    const cant = parseInt(cantidad, 10) || 1;
+    const precio = parseInt(precio_unitario, 10) || 0;
+    const cat = (categoria || 'medicamento').toLowerCase();
 
-  db.get('SELECT * FROM inventario WHERE LOWER(TRIM(nombre)) = LOWER(?)', [nomLimpio], (err, row) => {
-    if (err) return res.status(500).json({ error: err.message });
+    const existente = await getAsync('SELECT * FROM inventario WHERE LOWER(nombre) = LOWER(?)', [nombre.trim()]);
 
-    if (row) {
-      db.run(
-        `UPDATE inventario SET stock = stock + ?, pauta = CASE WHEN ? != "" THEN ? ELSE pauta END, precio_unitario = CASE WHEN ? > 0 THEN ? ELSE precio_unitario END WHERE id = ?`,
-        [cantNum, (pauta || '').trim(), (pauta || '').trim(), precio, precio, row.id],
-        (err) => {
-          if (err) return res.status(500).json({ error: err.message });
-          res.json({ success: true, action: 'updated' });
-        }
+    if (existente) {
+      const nuevoStock = existente.stock + cant;
+      await runAsync(
+        `UPDATE inventario SET stock = ?, precio_unitario = ?, pauta = ? WHERE id = ?`,
+        [nuevoStock, precio > 0 ? precio : existente.precio_unitario, pauta || existente.pauta, existente.id]
       );
     } else {
-      db.run(
-        `INSERT INTO inventario (nombre, stock, categoria, pauta, precio_unitario, stock_minimo, stock_maximo, prioridad, es_sos) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [nomLimpio, cantNum, categoria, pauta || 'N/A', precio, minStock, maxStock, prioridad || 'Media', es_sos ? 1 : 0],
-        function(err) {
-          if (err) return res.status(500).json({ error: err.message });
-          res.json({ success: true, action: 'inserted', id: this.lastID });
-        }
+      const stockMin = cat === 'medicamento' ? 10 : 6;
+      await runAsync(
+        `INSERT INTO inventario (nombre, categoria, stock, stock_minimo, prioridad, pauta, precio_unitario, es_sos)
+         VALUES (?, ?, ?, ?, 'Media', ?, ?, 0)`,
+        [nombre.trim(), cat, cant, stockMin, pauta || 'Uso clínico general', precio]
       );
     }
-  });
+
+    emitirCambioTiempoReal('stock', { nombre: nombre.trim(), cantidad: cant });
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error agregando stock:', error);
+    res.status(500).json({ success: false, error: 'Error al actualizar stock.' });
+  }
 });
 
-app.get('/api/supervision/reorden', (req, res) => {
-  const sql = `
-    SELECT 
-      i.*,
-      COALESCE(c.total_consumido, 0) AS consumo_semanal,
-      (COALESCE(c.total_consumido, 0) * i.precio_unitario) AS costo_consumo_semanal,
-      CASE WHEN i.stock <= i.stock_minimo THEN (i.stock_maximo - i.stock) ELSE 0 END AS cantidad_a_pedir,
-      CASE WHEN i.stock <= i.stock_minimo THEN ((i.stock_maximo - i.stock) * i.precio_unitario) ELSE 0 END AS costo_total_estimado
-    FROM inventario i
-    LEFT JOIN (
-      SELECT LOWER(TRIM(producto_nombre)) as nom, SUM(cantidad) as total_consumido
-      FROM historial_consumo WHERE fecha >= datetime('now', '-7 days')
-      GROUP BY LOWER(TRIM(producto_nombre))
-    ) c ON LOWER(TRIM(i.nombre)) = c.nom
-    ORDER BY CASE i.prioridad WHEN 'Alta' THEN 1 WHEN 'Media' THEN 2 ELSE 3 END, (i.stock <= i.stock_minimo) DESC, i.nombre ASC
-  `;
+// ============================================================================
+// 6. SUPERVISIÓN, REORDEN, CONSUMO SEMANAL Y BITÁCORA EN TIEMPO REAL
+// ============================================================================
+app.get('/api/actividad/reciente', async (req, res) => {
+  try {
+    const rows = await allAsync('SELECT * FROM consumos ORDER BY id DESC LIMIT 50');
+    const normalizados = rows.map(r => ({
+      ...r,
+      fecha_local: normalizarFechaChile24(r.fecha_local)
+    }));
+    res.json(normalizados);
+  } catch (error) {
+    res.status(500).json({ error: 'Error al obtener actividad reciente.' });
+  }
+});
 
-  db.all(sql, [], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
+app.get('/api/consumo/semanal', async (req, res) => {
+  try {
+    const hace7Dias = obtenerAhoraChile(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)).fechaISO;
+
+    const rows = await allAsync(
+      `SELECT
+         producto_nombre,
+         categoria,
+         usuario,
+         SUM(cantidad) AS total_consumido,
+         MAX(precio_unitario) AS precio_unitario,
+         SUM(cantidad * precio_unitario) AS costo_total_consumo,
+         MAX(fecha_local) AS ultima_fecha
+       FROM consumos
+       WHERE fecha_iso = '' OR fecha_iso >= ?
+       GROUP BY producto_nombre, categoria, usuario
+       ORDER BY MAX(id) DESC`,
+      [hace7Dias]
+    );
+
+    const detalles = rows.map(r => ({
+      ...r,
+      ultima_fecha: normalizarFechaChile24(r.ultima_fecha)
+    }));
+
+    const gastoTotalSemanal = detalles.reduce((acc, r) => acc + (r.costo_total_consumo || 0), 0);
+
+    res.json({ gastoTotalSemanal, detalles });
+  } catch (error) {
+    console.error('Error en /api/consumo/semanal:', error);
+    res.status(500).json({ error: 'Error al calcular consumo semanal.' });
+  }
+});
+
+app.get('/api/supervision/reorden', async (req, res) => {
+  try {
+    const hace7Dias = obtenerAhoraChile(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)).fechaISO;
+    const productos = await allAsync('SELECT * FROM inventario ORDER BY prioridad ASC, nombre ASC');
+    const consumos7d = await allAsync(
+      `SELECT producto_nombre, SUM(cantidad) AS total
+       FROM consumos
+       WHERE fecha_iso = '' OR fecha_iso >= ?
+       GROUP BY producto_nombre`,
+      [hace7Dias]
+    );
+
+    const mapaConsumo = {};
+    consumos7d.forEach(c => {
+      mapaConsumo[c.producto_nombre.toLowerCase()] = c.total || 0;
+    });
 
     let presupuestoTotal = 0;
     let gastoTotalConsumo = 0;
     let itemsEnAlerta = 0;
 
-    rows.forEach(r => {
-      presupuestoTotal += r.costo_total_estimado;
-      gastoTotalConsumo += r.costo_consumo_semanal;
-      if (r.stock <= r.stock_minimo) itemsEnAlerta++;
+    const detalles = productos.map(p => {
+      const consumoSemanal = mapaConsumo[p.nombre.toLowerCase()] || 0;
+      const precio = p.precio_unitario || 0;
+      const costoConsumoSemanal = consumoSemanal * precio;
+      const enAlerta = p.stock <= p.stock_minimo;
+
+      if (enAlerta) itemsEnAlerta++;
+
+      const stockOptimo = p.stock_minimo * 2;
+      const cantidadAPedir = enAlerta ? Math.max(stockOptimo - p.stock, p.stock_minimo) : 0;
+      const costoTotalEstimado = cantidadAPedir * precio;
+
+      presupuestoTotal += costoTotalEstimado;
+      gastoTotalConsumo += costoConsumoSemanal;
+
+      return {
+        id: p.id,
+        nombre: p.nombre,
+        categoria: p.categoria,
+        stock: p.stock,
+        stock_minimo: p.stock_minimo,
+        prioridad: p.prioridad || 'Media',
+        precio_unitario: precio,
+        es_sos: p.es_sos || 0,
+        consumo_semanal: consumoSemanal,
+        costo_consumo_semanal: costoConsumoSemanal,
+        cantidad_a_pedir: cantidadAPedir,
+        costo_total_estimado: costoTotalEstimado
+      };
     });
 
-    res.json({ resumen: { presupuestoTotal, gastoTotalConsumo, itemsEnAlerta, totalProductos: rows.length }, detalles: rows });
-  });
-});
-
-app.get('/api/consumo/semanal', (req, res) => {
-  const sql = `
-    SELECT 
-       hc.producto_nombre, hc.categoria, hc.usuario, SUM(hc.cantidad) as total_consumido, 
-       MAX(datetime(hc.fecha, 'localtime')) as ultima_fecha, COALESCE(i.precio_unitario, 0) as precio_unitario,
-       (SUM(hc.cantidad) * COALESCE(i.precio_unitario, 0)) as costo_total_consumo
-     FROM historial_consumo hc
-     LEFT JOIN inventario i ON LOWER(TRIM(hc.producto_nombre)) = LOWER(TRIM(i.nombre))
-     WHERE hc.fecha >= datetime('now', '-7 days') 
-     GROUP BY LOWER(TRIM(hc.producto_nombre)), hc.categoria, hc.usuario
-     ORDER BY total_consumido DESC
-  `;
-
-  db.all(sql, [], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    let gastoTotalSemanal = 0;
-    rows.forEach(r => { gastoTotalSemanal += r.costo_total_consumo; });
-    res.json({ gastoTotalSemanal, detalles: rows });
-  });
-});
-
-app.get('/api/actividad/reciente', (req, res) => {
-  const sql = `
-    SELECT id, producto_nombre, categoria, cantidad, usuario, datetime(fecha, 'localtime') as fecha_local
-    FROM historial_consumo
-    ORDER BY id DESC
-    LIMIT 15
-  `;
-  db.all(sql, [], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(rows);
-  });
-});
-
-app.post('/api/mensajes', (req, res) => {
-  const { tipo, mensaje, usuario } = req.body;
-  if (!mensaje || !mensaje.trim()) return res.status(400).json({ error: 'Mensaje vacío.' });
-
-  db.run(
-    'INSERT INTO mensajes_tens (tipo, mensaje, usuario) VALUES (?, ?, ?)',
-    [tipo || 'Falta Stock / Sugerencia', mensaje.trim(), usuario || 'Personal TENS'],
-    function(err) {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ success: true, id: this.lastID });
-    }
-  );
-});
-
-app.get('/api/mensajes', (req, res) => {
-  db.all('SELECT *, datetime(fecha, "localtime") as fecha_local FROM mensajes_tens ORDER BY id DESC', [], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(rows);
-  });
+    res.json({
+      resumen: {
+        presupuestoTotal,
+        gastoTotalConsumo,
+        itemsEnAlerta
+      },
+      detalles
+    });
+  } catch (error) {
+    console.error('Error en /api/supervision/reorden:', error);
+    res.status(500).json({ error: 'Error al generar informe de supervisión.' });
+  }
 });
 
 // ============================================================================
-// APIs GESTIÓN DE TURNOS EN TIEMPO REAL (CREAR, EDITAR, ELIMINAR)
+// 7. RUTAS DE TURNOS DEL PERSONAL
 // ============================================================================
-app.get('/api/personal', (req, res) => {
-  db.all('SELECT * FROM personal ORDER BY id ASC', [], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
+app.get('/api/personal', async (req, res) => {
+  try {
+    const rows = await allAsync('SELECT * FROM personal ORDER BY id ASC');
     res.json(rows);
-  });
-});
-
-app.post('/api/personal', (req, res) => {
-  const { nombre, rol, area, horario, colacion, dias } = req.body;
-  if (!nombre || !rol || !horario || !dias) {
-    return res.status(400).json({ error: 'Nombre, cargo, horario y días son obligatorios.' });
+  } catch (error) {
+    res.status(500).json({ error: 'Error al cargar turnos.' });
   }
-
-  db.run(
-    'INSERT INTO personal (nombre, rol, area, horario, colacion, dias, estado) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    [
-      nombre.trim(),
-      rol.trim(),
-      (area || 'Enfermería y Fármacos').trim(),
-      horario.trim(),
-      (colacion || '13:30 - 14:30 hrs').trim(),
-      dias.trim(),
-      'En Turno'
-    ],
-    function(err) {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ success: true, id: this.lastID });
-    }
-  );
 });
 
-app.put('/api/personal/:id', (req, res) => {
-  const { id } = req.params;
-  const { nombre, rol, area, horario, colacion, dias } = req.body;
-  if (!nombre || !rol || !horario || !dias) {
-    return res.status(400).json({ error: 'Complete todos los campos del turno.' });
-  }
-
-  db.run(
-    'UPDATE personal SET nombre = ?, rol = ?, area = ?, horario = ?, colacion = ?, dias = ? WHERE id = ?',
-    [
-      nombre.trim(),
-      rol.trim(),
-      (area || 'Enfermería y Fármacos').trim(),
-      horario.trim(),
-      (colacion || '13:30 - 14:30 hrs').trim(),
-      dias.trim(),
-      id
-    ],
-    function(err) {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ success: true });
-    }
-  );
-});
-
-app.delete('/api/personal/:id', (req, res) => {
-  const { id } = req.params;
-  db.run('DELETE FROM personal WHERE id = ?', [id], function(err) {
-    if (err) return res.status(500).json({ error: err.message });
+app.post('/api/personal', async (req, res) => {
+  try {
+    const { nombre, rol, area, horario, colacion, dias } = req.body;
+    await runAsync(
+      'INSERT INTO personal (nombre, rol, area, horario, colacion, dias) VALUES (?, ?, ?, ?, ?, ?)',
+      [nombre, rol, area, horario, colacion, dias]
+    );
+    emitirCambioTiempoReal('turno');
     res.json({ success: true });
-  });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Error al crear turno.' });
+  }
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Servidor Clínica Vital activo en: http://localhost:${PORT}/login.html`);
+app.put('/api/personal/:id', async (req, res) => {
+  try {
+    const { nombre, rol, area, horario, colacion, dias } = req.body;
+    await runAsync(
+      'UPDATE personal SET nombre = ?, rol = ?, area = ?, horario = ?, colacion = ?, dias = ? WHERE id = ?',
+      [nombre, rol, area, horario, colacion, dias, req.params.id]
+    );
+    emitirCambioTiempoReal('turno');
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Error al actualizar turno.' });
+  }
 });
+
+app.delete('/api/personal/:id', async (req, res) => {
+  try {
+    await runAsync('DELETE FROM personal WHERE id = ?', [req.params.id]);
+    emitirCambioTiempoReal('turno');
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Error al eliminar turno.' });
+  }
+});
+
+// ============================================================================
+// 8. RUTAS DE RESIDENTES Y FICHA DIGITAL QR (MÓVIL)
+// ============================================================================
+app.get('/api/pacientes', async (req, res) => {
+  try {
+    const rows = await allAsync('SELECT * FROM pacientes ORDER BY id ASC');
+    res.json(rows);
+  } catch (error) {
+    res.status(500).json({ error: 'Error al cargar residentes.' });
+  }
+});
+
+app.post('/api/pacientes', async (req, res) => {
+  try {
+    const { nombre, rut, edad, diagnostico, imagen_ficha } = req.body;
+    await runAsync(
+      'INSERT INTO pacientes (nombre, rut, edad, diagnostico, imagen_ficha) VALUES (?, ?, ?, ?, ?)',
+      [nombre, rut, parseInt(edad, 10) || 15, diagnostico, imagen_ficha || 'ficha1.png']
+    );
+    emitirCambioTiempoReal('paciente');
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Error al registrar residente.' });
+  }
+});
+
+app.put('/api/pacientes/:id', async (req, res) => {
+  try {
+    const { nombre, rut, edad, diagnostico, imagen_ficha } = req.body;
+    await runAsync(
+      'UPDATE pacientes SET nombre = ?, rut = ?, edad = ?, diagnostico = ?, imagen_ficha = ? WHERE id = ?',
+      [nombre, rut, parseInt(edad, 10) || 15, diagnostico, imagen_ficha || 'ficha1.png', req.params.id]
+    );
+    emitirCambioTiempoReal('paciente');
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Error al editar residente.' });
+  }
+});
+
+app.delete('/api/pacientes/:id', async (req, res) => {
+  try {
+    await runAsync('DELETE FROM pacientes WHERE id = ?', [req.params.id]);
+    emitirCambioTiempoReal('paciente');
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Error al eliminar residente.' });
+  }
+});
+
+app.get('/ficha/:id', async (req, res) => {
+  try {
+    const p = await getAsync('SELECT * FROM pacientes WHERE id = ?', [req.params.id]);
+    if (!p) {
+      return res.status(404).send('<h2>Ficha clínica no encontrada.</h2>');
+    }
+
+    const ahoraChile = obtenerAhoraChile().fechaHora24;
+    const imgSrc = `/images/${p.imagen_ficha || 'ficha1.png'}`;
+
+    res.send(`
+      <!DOCTYPE html>
+      <html lang="es">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Ficha Clínica - ${p.nombre}</title>
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+      </head>
+      <body class="bg-light p-3">
+        <div class="container" style="max-width: 600px;">
+          <div class="card border-0 shadow rounded-4 overflow-hidden">
+            <div class="card-header bg-primary text-white p-3">
+              <div class="d-flex justify-content-between align-items-center">
+                <strong>🏥 Clínica Vital SpA · Ficha Digital</strong>
+                <span class="badge bg-white text-primary font-monospace">${ahoraChile} hrs</span>
+              </div>
+            </div>
+            <div class="card-body p-4">
+              <h4 class="fw-bold text-dark mb-3">${p.nombre}</h4>
+              <p class="mb-1"><strong>RUT:</strong> ${p.rut}</p>
+              <p class="mb-1"><strong>Edad:</strong> ${p.edad} años</p>
+              <p class="mb-3"><strong>Diagnóstico:</strong> <span class="text-danger fw-semibold">${p.diagnostico}</span></p>
+              <div class="text-center border rounded-3 p-2 bg-white mb-3">
+                <img src="${imgSrc}" alt="Ficha Clínica" class="img-fluid rounded" onerror="this.style.display='none'">
+              </div>
+              <div class="d-grid gap-2">
+                <button class="btn btn-primary fw-bold" onclick="window.print()">🖨️ Imprimir / Guardar PDF</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </body>
+      </html>
+    `);
+  } catch (error) {
+    res.status(500).send('Error al cargar ficha clínica.');
+  }
+});
+
+// ============================================================================
+// 9. RUTAS DE MENSAJES Y ALERTAS DEL PERSONAL A JEFATURA
+// ============================================================================
+app.get('/api/mensajes', async (req, res) => {
+  try {
+    const rows = await allAsync('SELECT * FROM mensajes ORDER BY id DESC LIMIT 40');
+    const normalizados = rows.map(m => ({
+      ...m,
+      fecha_local: normalizarFechaChile24(m.fecha_local)
+    }));
+    res.json(normalizados);
+  } catch (error) {
+    res.status(500).json({ error: 'Error al cargar mensajes.' });
+  }
+});
+
+app.post('/api/mensajes', async (req, res) => {
+  try {
+    const { tipo, mensaje, usuario, fecha_chile } = req.body;
+    const fechaRegistro24 = fecha_chile ? normalizarFechaChile24(fecha_chile) : obtenerAhoraChile().fechaHora24;
+
+    await runAsync(
+      'INSERT INTO mensajes (tipo, mensaje, usuario, fecha_local) VALUES (?, ?, ?, ?)',
+      [tipo, mensaje, usuario, fechaRegistro24]
+    );
+
+    emitirCambioTiempoReal('mensaje', { tipo, usuario });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Error al enviar mensaje.' });
+  }
+});
+
+// ============================================================================
+// 10. INICIO DEL SERVIDOR
+// ============================================================================
+inicializarBaseDatos()
+  .then(() => {
+    app.listen(PORT, () => {
+      const st = obtenerAhoraChile();
+      console.log(`✅ Servidor Clínica Vital SpA activo en http://localhost:${PORT}`);
+      console.log(`🇨🇱 Hora Oficial Santiago, Chile (24h): ${st.fechaHora24} hrs`);
+      console.log(`🗄️ Base de datos: ${nombreArchivoBD} (Motor: ${motorBD})`);
+    });
+  })
+  .catch(err => {
+    console.error('❌ Error al inicializar la base de datos:', err);
+  });
