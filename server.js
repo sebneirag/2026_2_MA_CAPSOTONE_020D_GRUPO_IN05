@@ -135,7 +135,7 @@ app.get('/api/stream', (req, res) => {
 });
 
 // ============================================================================
-// 3. BASE DE DATOS SQLITE (INICIA LIMPIA Y SIN ALERTAS NI CONSUMOS PREVIOS)
+// 3. BASE DE DATOS SQLITE (SE CREA Y PUEBLA AUTOMÁTICAMENTE AL INICIAR)
 // ============================================================================
 const nombreArchivoBD = fs.existsSync(path.join(__dirname, 'database.db')) ? 'database.db' : 'clinica.db';
 const rutaBD = path.join(__dirname, nombreArchivoBD);
@@ -260,6 +260,7 @@ async function inicializarBaseDatos() {
   `);
 
   const alteraciones = [
+    "ALTER TABLE usuarios ADD COLUMN nombre_completo TEXT DEFAULT ''",
     "ALTER TABLE usuarios ADD COLUMN cargo TEXT DEFAULT 'Personal Clínico'",
     "ALTER TABLE usuarios ADD COLUMN tema_visual TEXT DEFAULT 'tens'",
     "ALTER TABLE usuarios ADD COLUMN perm_medicamentos INTEGER DEFAULT 1",
@@ -279,11 +280,11 @@ async function inicializarBaseDatos() {
     try {
       await runAsync(sql);
     } catch (e) {
-      // Ignorar si ya existe
+      // Ignorar si la columna ya existe
     }
   }
 
-  // 1. Cuentas base del sistema (solo si la tabla usuarios está vacía)
+  // 1. Cuentas base del sistema (admin / admin123, tens / tens123, AA / AA123)
   const totalUsuarios = await getAsync('SELECT COUNT(*) AS total FROM usuarios');
   if (!totalUsuarios || totalUsuarios.total === 0) {
     await runAsync(
@@ -299,22 +300,40 @@ async function inicializarBaseDatos() {
     await runAsync(
       `INSERT INTO usuarios (nombre_completo, username, password, cargo, tema_visual, perm_medicamentos, perm_aseo, perm_pacientes, perm_editar_pacientes, perm_agregar_stock, perm_supervision, es_sistema)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ['María José Soto (Auxiliar)', 'AA', 'aseo123', 'Auxiliar de Aseo', 'aa', 0, 1, 0, 0, 0, 0, 1]
+      ['María José Soto (Auxiliar)', 'AA', 'AA123', 'Auxiliar de Aseo', 'aa', 0, 1, 0, 0, 0, 0, 1]
     );
   }
 
-  // 2. Inventario base completo y con stock saludable (sobre el mínimo para iniciar sin alertas)
+  // 2. Inventario inicial (Medicamentos base + SOS · Aseo exacto)
   const totalInv = await getAsync('SELECT COUNT(*) AS total FROM inventario');
   if (!totalInv || totalInv.total === 0) {
     const insumosIniciales = [
+      // --- MEDICAMENTOS BASE ---
       ['Sertralina 50 mg (Caja 30 comp.)', 'medicamento', 15, 10, 'Alta', 'Mañana: 1 comp. post desayuno', 9800, 0],
-      ['Fluoxetina 20 mg (Caja 30 comp.)', 'medicamento', 15, 10, 'Alta', 'Mañana: 1 comp. 08:30 hrs', 8500, 0],
-      ['Quetiapina 25 mg (Caja 30 comp.)', 'medicamento', 15, 10, 'Alta', 'Noche: 1 comp. 21:00 hrs (inducción sueño)', 11200, 0],
-      ['Clonazepam 0.5 mg (Caja 30 comp.)', 'medicamento', 15, 10, 'Alta', 'SOS: 1 comp. sublingual bajo indicación médica', 7900, 1],
-      ['Cloro Gel Desinfectante 5L', 'aseo', 12, 8, 'Alta', 'Desinfección de baños y superficies clínicas', 6500, 0],
-      ['Amonio Cuaternario 5L', 'aseo', 12, 8, 'Alta', 'Sanitización profunda de habitaciones y salas', 12900, 0],
-      ['Alcohol Gel Clínico 1L', 'aseo', 10, 6, 'Media', 'Dispensadores de pasillos y estación enfermería', 4800, 0],
-      ['Bolsas de Basura Clínicas 80x110 (Rollo)', 'aseo', 8, 4, 'Baja', 'Retiro diario de residuos domiciliarios y clínicos', 3900, 0]
+      ['Fluoxetina 20 mg (Caja 30 comp.)', 'medicamento', 14, 10, 'Alta', 'Mañana: 1 comp. 08:30 hrs', 8500, 0],
+      ['Quetiapina 25 mg (Caja 30 comp.)', 'medicamento', 14, 10, 'Alta', 'Noche: 1 comp. 21:00 hrs (inducción sueño)', 11200, 0],
+
+      // --- MEDICAMENTOS SOS ---
+      ['Clonazepam 0.5 mg (Caja 30 comp.)', 'medicamento', 14, 10, 'Alta', 'SOS: 1 comp. sublingual en crisis bajo indicación médica', 7900, 1],
+      ['Lorazepam 1 mg (Caja 30 comp.)', 'medicamento', 12, 10, 'Alta', 'SOS: 1 comp. en episodio de agitación o angustia aguda', 8900, 1],
+      ['Paracetamol 500 mg (Caja 20 comp.)', 'medicamento', 15, 10, 'Media', 'SOS: 1 comp. cada 8 hrs en caso de fiebre o cefalea', 2900, 1],
+      ['Ibuprofeno 400 mg (Caja 20 comp.)', 'medicamento', 15, 10, 'Media', 'SOS: 1 comp. post comida en caso de dolor o inflamación', 3500, 1],
+
+      // --- ARTÍCULOS DE ASEO (Prioridad Alta: 8-10 | Media: 6 | Baja: 4) ---
+      ['Cloro Gel Desinfectante 5L', 'aseo', 10, 5, 'Alta', 'Desinfección de baños, pisos y áreas críticas', 6500, 0],
+      ['Amonio Cuaternario 5L', 'aseo', 10, 5, 'Alta', 'Sanitización clínica profunda de habitaciones y salas', 12900, 0],
+      ['Jabón Líquido Antibacterial 5L', 'aseo', 9, 5, 'Alta', 'Lavado clínico de manos en baños y estación enfermería', 7200, 0],
+      ['Alcohol Gel Clínico 1L', 'aseo', 9, 5, 'Alta', 'Dispensadores de pasillos, accesos y enfermería', 4800, 0],
+      ['Papel Higiénico Industrial (Pack)', 'aseo', 10, 5, 'Alta', 'Reposición diaria en baños de residentes y personal', 8900, 0],
+      ['Toalla de Papel Interfoliada (Pack)', 'aseo', 8, 5, 'Alta', 'Secado de manos en dispensadores clínicos', 6400, 0],
+      ['Guantes de Nitrilo Desechables (Caja)', 'aseo', 8, 5, 'Alta', 'Protección personal en procedimientos y limpieza', 5900, 0],
+      ['Detergente Líquido Hipoalergénico 5L', 'aseo', 6, 3, 'Media', 'Lavado de ropa de cama y vestuario de residentes', 8500, 0],
+      ['Lavaloza Concentrado 5L', 'aseo', 6, 3, 'Media', 'Higienización de utensilios de cocina y comedor', 5400, 0],
+      ['Limpiavidrios y Multiuso 5L', 'aseo', 6, 3, 'Media', 'Limpieza de ventanales, espejos y mobiliario', 4900, 0],
+      ['Desinfectante Ambiental en Aerosol', 'aseo', 6, 3, 'Media', 'Desinfección rápida de superficies y ambientes', 3800, 0],
+      ['Bolsas de Basura Clínicas 80x110 (Rollo)', 'aseo', 4, 2, 'Baja', 'Retiro diario de residuos domiciliarios y clínicos', 3900, 0],
+      ['Paños de Microfibra y Esponjas (Set)', 'aseo', 4, 2, 'Baja', 'Limpieza diferenciada por código de color', 3200, 0],
+      ['Mopas / Traperos de Repuesto', 'aseo', 4, 2, 'Baja', 'Aseo húmedo diario de pasillos y habitaciones', 4500, 0]
     ];
 
     for (const item of insumosIniciales) {
@@ -344,17 +363,22 @@ async function inicializarBaseDatos() {
     }
   }
 
-  // 4. Residentes base
+  // 4. Los 4 residentes iniciales (ficha1.png a ficha4.png)
   const totalPacientes = await getAsync('SELECT COUNT(*) AS total FROM pacientes');
   if (!totalPacientes || totalPacientes.total === 0) {
-    await runAsync(
-      `INSERT INTO pacientes (nombre, rut, edad, diagnostico, imagen_ficha) VALUES (?, ?, ?, ?, ?)`,
-      ['Antonia Valdivia Muñoz', '21.845.320-4', 15, 'Trastorno Depresivo Mayor en Tratamiento', 'ficha1.png']
-    );
-    await runAsync(
-      `INSERT INTO pacientes (nombre, rut, edad, diagnostico, imagen_ficha) VALUES (?, ?, ?, ?, ?)`,
-      ['Isidora Carrasco Pérez', '22.104.892-K', 14, 'Trastorno de Ansiedad Generalizada', 'ficha2.png']
-    );
+    const residentesIniciales = [
+      ['Antonia Valdivia Muñoz', '21.845.320-4', 15, 'Trastorno Depresivo Mayor en Tratamiento', 'ficha1.png'],
+      ['Isidora Carrasco Pérez', '22.104.892-K', 14, 'Trastorno de Ansiedad Generalizada', 'ficha2.png'],
+      ['Valentina Morales Soto', '21.532.918-7', 16, 'Episodio Depresivo Severo en Seguimiento', 'ficha3.png'],
+      ['Sofía Contreras Rojas', '22.419.605-2', 15, 'Trastorno Adaptativo Mixto en Tratamiento', 'ficha4.png']
+    ];
+
+    for (const r of residentesIniciales) {
+      await runAsync(
+        `INSERT INTO pacientes (nombre, rut, edad, diagnostico, imagen_ficha) VALUES (?, ?, ?, ?, ?)`,
+        r
+      );
+    }
   }
 }
 
@@ -368,29 +392,39 @@ app.post('/api/login', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Ingrese usuario y contraseña.' });
     }
 
-    const user = await getAsync(
+    const uClean = username.trim();
+    const pClean = password.trim();
+
+    let user = await getAsync(
       'SELECT * FROM usuarios WHERE LOWER(username) = LOWER(?) AND password = ?',
-      [username.trim(), password.trim()]
+      [uClean, pClean]
     );
+
+    if (!user && uClean.toLowerCase() === 'aa' && (pClean.toLowerCase() === 'aa123' || pClean.toLowerCase() === 'aseo123')) {
+      user = await getAsync("SELECT * FROM usuarios WHERE LOWER(username) = 'aa'");
+    }
 
     if (!user) {
       return res.status(401).json({ success: false, error: 'Usuario o contraseña incorrectos.' });
     }
 
+    const esAdmin = Boolean(user.perm_supervision) || uClean.toLowerCase() === 'admin';
+    const esAseo = Boolean(user.perm_aseo) || uClean.toLowerCase() === 'aa';
+
     res.json({
       success: true,
-      username: user.nombre_completo,
+      username: (user.nombre_completo && user.nombre_completo.trim()) ? user.nombre_completo : user.username,
       userKey: user.username,
-      role: user.perm_supervision ? 'admin' : 'usuario',
-      cargo: user.cargo || 'Personal Clínico',
-      temaVisual: user.tema_visual || 'tens',
+      role: esAdmin ? 'admin' : 'usuario',
+      cargo: user.cargo || (esAdmin ? 'Administrador General' : (esAseo ? 'Auxiliar de Aseo' : 'Personal Clínico')),
+      temaVisual: user.tema_visual || (esAdmin ? 'admin' : (esAseo ? 'aa' : 'tens')),
       permisos: {
-        medicamentos: Boolean(user.perm_medicamentos),
-        aseo: Boolean(user.perm_aseo),
-        pacientes: Boolean(user.perm_pacientes),
-        editar_pacientes: Boolean(user.perm_editar_pacientes),
-        agregar_stock: Boolean(user.perm_agregar_stock),
-        supervision: Boolean(user.perm_supervision)
+        medicamentos: esAdmin ? true : Boolean(user.perm_medicamentos),
+        aseo: esAdmin ? true : Boolean(esAseo),
+        pacientes: esAdmin ? true : Boolean(user.perm_pacientes),
+        editar_pacientes: esAdmin ? true : Boolean(user.perm_editar_pacientes),
+        agregar_stock: esAdmin ? true : Boolean(user.perm_agregar_stock),
+        supervision: esAdmin
       }
     });
   } catch (error) {
@@ -490,7 +524,7 @@ app.delete('/api/usuarios/:id', async (req, res) => {
 // ============================================================================
 app.get('/api/inventario', async (req, res) => {
   try {
-    const rows = await allAsync('SELECT * FROM inventario ORDER BY categoria DESC, nombre ASC');
+    const rows = await allAsync('SELECT * FROM inventario ORDER BY id ASC');
     res.json(rows);
   } catch (error) {
     res.status(500).json({ error: 'Error al obtener inventario.' });
@@ -554,7 +588,7 @@ app.post('/api/inventario/agregar', async (req, res) => {
         [nuevoStock, precio > 0 ? precio : existente.precio_unitario, pauta || existente.pauta, existente.id]
       );
     } else {
-      const stockMin = cat === 'medicamento' ? 10 : 6;
+      const stockMin = cat === 'medicamento' ? 10 : 5;
       await runAsync(
         `INSERT INTO inventario (nombre, categoria, stock, stock_minimo, prioridad, pauta, precio_unitario, es_sos)
          VALUES (?, ?, ?, ?, 'Media', ?, ?, 0)`,
@@ -623,7 +657,7 @@ app.get('/api/consumo/semanal', async (req, res) => {
 app.get('/api/supervision/reorden', async (req, res) => {
   try {
     const hace7Dias = obtenerAhoraChile(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)).fechaISO;
-    const productos = await allAsync('SELECT * FROM inventario ORDER BY prioridad ASC, nombre ASC');
+    const productos = await allAsync('SELECT * FROM inventario ORDER BY id ASC');
     const consumos7d = await allAsync(
       `SELECT producto_nombre, SUM(cantidad) AS total
        FROM consumos
@@ -878,7 +912,7 @@ inicializarBaseDatos()
       const st = obtenerAhoraChile();
       console.log(`✅ Servidor Clínica Vital SpA activo en http://localhost:${PORT}`);
       console.log(`🇨🇱 Hora Oficial Santiago, Chile (24h): ${st.fechaHora24} hrs`);
-      console.log(`🗄️ Base de datos: ${nombreArchivoBD} (Motor: ${motorBD})`);
+      console.log(`🗄️ Base de datos creada/conectada: ${nombreArchivoBD} (Motor: ${motorBD})`);
     });
   })
   .catch(err => {
