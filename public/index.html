@@ -1,75 +1,434 @@
 <!DOCTYPE html>
-<html lang="es" data-bs-theme="dark">
+<html lang="es" data-bs-theme="light">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Proyecto APT - Clínica Vital SpA</title>
+  <title>Clínica Vital SpA - Gestión Clínica e Inventario</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
   <style>
-    body { background-color: #121212; color: #e0e0e0; font-family: system-ui, -apple-system, sans-serif; }
-    .navbar { border-bottom: 1px solid #333; background-color: #1e1e1e !important; }
-    .nav-tabs .nav-link { color: #aaa; border: none; }
-    .nav-tabs .nav-link.active { color: #fff; background-color: #2b2b2b; border-bottom: 2px solid #fff; font-weight: bold; }
-    .card-custom { background-color: #1e1e1e; border: 1px solid #333; border-radius: 8px; }
-    .table-dark-custom { --bs-table-bg: #1e1e1e; --bs-table-border-color: #333; }
-    .qr-img { width: 130px; height: 130px; border-radius: 8px; border: 2px solid #444; background-color: #fff; padding: 4px; }
-    .admin-only { display: none; }
-    .tens-only { display: inline-block; }
+    /* ==========================================================================
+       SISTEMA DE DISEÑO BLANCO CLÍNICO + ATMÓSFERAS DINÁMICAS POR ÁREA / ROL
+       ========================================================================== */
+    :root {
+      --role-primary: #0284c7;
+      --role-primary-dark: #0369a1;
+      --role-soft: #f0f9ff;
+      --role-soft-border: #bae6fd;
+      --role-badge-bg: #e0f2fe;
+      --role-badge-text: #0369a1;
+      --role-gradient: linear-gradient(135deg, #0284c7 0%, #0ea5e9 100%);
+      --canvas-bg: #f8fafc;
+    }
+
+    body[data-theme="admin"] {
+      --role-primary: #1d4ed8;
+      --role-primary-dark: #1e3a8a;
+      --role-soft: #eff6ff;
+      --role-soft-border: #bfdbfe;
+      --role-badge-bg: #dbeafe;
+      --role-badge-text: #1e40af;
+      --role-gradient: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%);
+      --canvas-bg: #f4f7fb;
+    }
+
+    body[data-theme="tens"] {
+      --role-primary: #0284c7;
+      --role-primary-dark: #0369a1;
+      --role-soft: #ecfeff;
+      --role-soft-border: #a5f3fc;
+      --role-badge-bg: #cffafe;
+      --role-badge-text: #0e7490;
+      --role-gradient: linear-gradient(135deg, #0284c7 0%, #06b6d4 100%);
+      --canvas-bg: #f4fbfd;
+    }
+
+    body[data-theme="aa"] {
+      --role-primary: #059669;
+      --role-primary-dark: #047857;
+      --role-soft: #ecfdf5;
+      --role-soft-border: #a7f3d0;
+      --role-badge-bg: #d1fae5;
+      --role-badge-text: #065f46;
+      --role-gradient: linear-gradient(135deg, #047857 0%, #10b981 100%);
+      --canvas-bg: #f3fbf8;
+    }
+
+    body {
+      background-color: var(--canvas-bg);
+      color: #0f172a;
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      transition: background-color 0.35s ease;
+    }
+
+    .navbar-clinic {
+      background-color: #ffffff;
+      border-bottom: 1px solid #e2e8f0;
+      box-shadow: 0 2px 12px rgba(15, 23, 42, 0.04);
+    }
+
+    .brand-pill {
+      width: 40px;
+      height: 40px;
+      border-radius: 12px;
+      background: var(--role-gradient);
+      color: #ffffff;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.25rem;
+      box-shadow: 0 4px 12px rgba(2, 132, 199, 0.22);
+    }
+
+    .role-hero-banner {
+      background: #ffffff;
+      border: 1px solid var(--role-soft-border);
+      border-left: 6px solid var(--role-primary);
+      border-radius: 16px;
+      padding: 18px 22px;
+      box-shadow: 0 6px 20px rgba(15, 23, 42, 0.04);
+      animation: fadeDown 0.45s ease;
+    }
+
+    @keyframes fadeDown {
+      from { opacity: 0; transform: translateY(-10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .badge-role-area {
+      background-color: var(--role-badge-bg);
+      color: var(--role-badge-text);
+      border: 1px solid var(--role-soft-border);
+      font-weight: 700;
+      padding: 6px 14px;
+      border-radius: 999px;
+      font-size: 0.82rem;
+    }
+
+    .nav-pills-clinic {
+      background: #ffffff;
+      padding: 6px;
+      border-radius: 14px;
+      border: 1px solid #e2e8f0;
+      display: inline-flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      box-shadow: 0 2px 8px rgba(15, 23, 42, 0.03);
+    }
+
+    .nav-pills-clinic .nav-link {
+      color: #475569;
+      font-weight: 600;
+      border-radius: 10px;
+      padding: 9px 18px;
+      transition: all 0.22s ease;
+    }
+
+    .nav-pills-clinic .nav-link:hover {
+      background-color: var(--role-soft);
+      color: var(--role-primary-dark);
+    }
+
+    .nav-pills-clinic .nav-link.active {
+      background: var(--role-gradient);
+      color: #ffffff;
+      box-shadow: 0 4px 12px rgba(2, 132, 199, 0.22);
+    }
+
+    .card-clinic {
+      background-color: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 16px;
+      box-shadow: 0 4px 16px rgba(15, 23, 42, 0.04);
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .table-clinic thead th {
+      background-color: var(--role-soft);
+      color: var(--role-primary-dark);
+      font-weight: 700;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      border-bottom: 2px solid var(--role-soft-border);
+      padding: 12px;
+    }
+
+    .table-clinic tbody td {
+      padding: 13px 12px;
+      border-bottom: 1px solid #f1f5f9;
+      vertical-align: middle;
+    }
+
+    .table-clinic tbody tr:hover {
+      background-color: #f8fafc;
+    }
+
+    .btn-role-primary {
+      background: var(--role-gradient);
+      border: none;
+      color: #ffffff;
+      font-weight: 600;
+      border-radius: 10px;
+      transition: all 0.2s ease;
+    }
+
+    .btn-role-primary:hover {
+      opacity: 0.94;
+      transform: translateY(-1px);
+      color: #ffffff;
+    }
+
+    .btn-download-report {
+      background: linear-gradient(135deg, #16a34a 0%, #15803d 100%);
+      border: none;
+      color: #ffffff;
+      font-weight: 700;
+      border-radius: 10px;
+      box-shadow: 0 4px 12px rgba(22, 163, 74, 0.22);
+      transition: all 0.2s ease;
+    }
+
+    .btn-download-report:hover {
+      background: linear-gradient(135deg, #15803d 0%, #166534 100%);
+      transform: translateY(-1px);
+      color: #ffffff;
+    }
+
+    .qr-img {
+      width: 125px;
+      height: 125px;
+      border-radius: 12px;
+      border: 2px solid var(--role-soft-border);
+      background-color: #ffffff;
+      padding: 6px;
+      transition: transform 0.25s ease;
+    }
+
+    .qr-img:hover {
+      transform: scale(1.06);
+    }
+
+    /* ==========================================================================
+       TURNOS DINÁMICOS CON MOVIMIENTO Y PROYECCIÓN DÍA SIGUIENTE
+       ========================================================================== */
+    .shift-card {
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 16px;
+      padding: 18px;
+      position: relative;
+      overflow: hidden;
+      transition: all 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+      animation: staggerSlideIn 0.45s ease both;
+    }
+
+    .shift-card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 12px 26px rgba(15, 23, 42, 0.08);
+      border-color: var(--role-primary);
+    }
+
+    .shift-card.active-today {
+      border-left: 5px solid #10b981;
+    }
+
+    .shift-card.in-lunch {
+      border-left: 5px solid #f59e0b;
+    }
+
+    .shift-card.off-today {
+      opacity: 0.72;
+      background: #f8fafc;
+      border-left: 5px solid #cbd5e1;
+    }
+
+    .shift-card.tomorrow-card {
+      border-left: 5px solid var(--role-primary);
+      background: linear-gradient(180deg, #ffffff 0%, var(--role-soft) 100%);
+    }
+
+    @keyframes staggerSlideIn {
+      from { opacity: 0; transform: translateY(14px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .pulse-dot {
+      display: inline-block;
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background-color: #10b981;
+      margin-right: 6px;
+      animation: pulseRing 1.8s infinite;
+    }
+
+    @keyframes pulseRing {
+      0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.65); }
+      70% { box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+    }
+
+    .avatar-circle {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 1rem;
+      flex-shrink: 0;
+    }
+
+    .kbd-shortcut {
+      background: #f1f5f9;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      padding: 2px 7px;
+      font-size: 0.75rem;
+      font-family: monospace;
+      font-weight: 700;
+      color: #334155;
+    }
+
+    .supervision-only { display: none; }
+    .perm-stock-only { display: none; }
   </style>
 </head>
-<body>
+<body data-theme="tens">
 
-  <!-- Navbar -->
-  <nav class="navbar navbar-expand-lg navbar-dark mb-4 px-3">
+  <!-- Navbar Luminosa -->
+  <nav class="navbar navbar-expand-lg navbar-clinic sticky-top mb-3 px-3 py-2">
     <div class="container-fluid">
-      <span class="navbar-brand fw-bold fs-4">Clínica Vital SpA <small id="lbl-rol" class="fs-6 text-secondary fw-normal">| Proyecto APT</small></span>
-      <div>
-        <button id="btn-mensaje-tens" class="btn btn-outline-warning btn-sm me-2 tens-only" data-bs-toggle="modal" data-bs-target="#modalMensajeTens">📩 Enviar Sugerencia / Avisar Falta</button>
-        <button id="btn-supervision" class="btn btn-warning btn-sm fw-bold me-2 admin-only" data-bs-toggle="modal" data-bs-target="#modalSupervision">🛡️ Panel de Supervisión y Cobros</button>
-        <button id="btn-reporte" class="btn btn-outline-info btn-sm me-2 admin-only" data-bs-toggle="modal" data-bs-target="#modalReporte">📊 Consumo Semanal Valorizado</button>
-        <button id="btn-logout" class="btn btn-outline-danger btn-sm">Cerrar Sesión</button>
+      <div class="d-flex align-items-center gap-2">
+        <span class="brand-pill">🏥</span>
+        <div>
+          <span class="navbar-brand fw-bold fs-5 m-0 text-dark">Clínica Vital SpA</span>
+          <span id="lbl-rol" class="badge-role-area ms-2">Cargando perfil...</span>
+        </div>
+      </div>
+
+      <div class="d-flex flex-wrap align-items-center gap-2 mt-2 mt-lg-0">
+        <div class="dropdown">
+          <button class="btn btn-light border fw-semibold btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown">
+            📑 Informes y Reportes
+          </button>
+          <ul class="dropdown-menu dropdown-menu-end shadow-sm border-0 rounded-3 p-2" style="min-width: 300px;">
+            <li>
+              <button class="dropdown-item rounded-2 py-2 d-flex justify-content-between align-items-center" onclick="abrirReporteFaltantes()">
+                <span>🚨 Productos Faltantes / Críticos</span>
+                <span class="kbd-shortcut">Alt + F</span>
+              </button>
+            </li>
+            <li>
+              <button class="dropdown-item rounded-2 py-2 d-flex justify-content-between align-items-center" onclick="abrirReporteCategorias()">
+                <span>📂 Informe por Categoría</span>
+                <span class="kbd-shortcut">Alt + C</span>
+              </button>
+            </li>
+            <li class="supervision-only"><hr class="dropdown-divider"></li>
+            <li class="supervision-only">
+              <button class="dropdown-item rounded-2 py-2 d-flex justify-content-between align-items-center text-success fw-semibold" data-bs-toggle="modal" data-bs-target="#modalReporte">
+                <span>📊 Consumo Semanal Valorizado</span>
+                <span class="kbd-shortcut">Alt + R</span>
+              </button>
+            </li>
+          </ul>
+        </div>
+
+        <button id="btn-mensaje-tens" class="btn btn-outline-warning text-dark fw-semibold btn-sm" data-bs-toggle="modal" data-bs-target="#modalMensajeTens">
+          📩 Avisar Falta / Sugerencia
+        </button>
+
+        <button id="btn-supervision" class="btn btn-role-primary btn-sm px-3 supervision-only" data-bs-toggle="modal" data-bs-target="#modalSupervision">
+          🛡️ Supervisión, Cobros y Usuarios
+        </button>
+
+        <button id="btn-logout" class="btn btn-outline-danger btn-sm fw-semibold">
+          Salir
+        </button>
       </div>
     </div>
   </nav>
 
   <div class="container pb-5">
 
-    <ul class="nav nav-tabs mb-4" id="mainTabs" role="tablist">
-      <li class="nav-item" role="presentation">
-        <button class="nav-link active" id="inventario-tab" data-bs-toggle="tab" data-bs-target="#inventario-pane" type="button" role="tab">📦 Inventario de Insumos</button>
-      </li>
-      <li class="nav-item" role="presentation">
-        <button class="nav-link" id="residentes-tab" data-bs-toggle="tab" data-bs-target="#residentes-pane" type="button" role="tab">👥 Personal de Turno del Día</button>
-      </li>
-      <li class="nav-item" role="presentation" id="pacientes-tab-li">
-        <button class="nav-link" id="pacientes-tab" data-bs-toggle="tab" data-bs-target="#pacientes-pane" type="button" role="tab">📋 Residentes Menores y Fichas QR</button>
-      </li>
-    </ul>
+    <!-- Banner Hero Dinámico según Área de Desempeño -->
+    <div class="role-hero-banner mb-4 d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3">
+      <div>
+        <div class="d-flex align-items-center gap-2 mb-1">
+          <h5 id="hero-titulo" class="fw-bold m-0 text-dark">Bienvenido/a al Sistema Clínico</h5>
+        </div>
+        <p id="hero-subtitulo" class="text-secondary small m-0">
+          Panel operativo sincronizado en tiempo real con la base de datos de Clínica Vital SpA.
+        </p>
+      </div>
+      <div class="d-flex flex-wrap align-items-center gap-2">
+        <button type="button" class="btn btn-sm btn-light border text-dark" onclick="abrirReporteFaltantes()" title="Atajo: Alt + F">
+          🚨 Faltantes <span class="kbd-shortcut ms-1">Alt+F</span>
+        </button>
+        <button type="button" class="btn btn-sm btn-light border text-dark" onclick="abrirReporteCategorias()" title="Atajo: Alt + C">
+          📂 Por Categoría <span class="kbd-shortcut ms-1">Alt+C</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Navegación Principal -->
+    <div class="mb-4">
+      <ul class="nav nav-pills nav-pills-clinic" id="mainTabs" role="tablist">
+        <li class="nav-item" role="presentation">
+          <button class="nav-link active" id="inventario-tab" data-bs-toggle="tab" data-bs-target="#inventario-pane" type="button" role="tab">
+            📦 Inventario de Insumos
+          </button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="residentes-tab" data-bs-toggle="tab" data-bs-target="#residentes-pane" type="button" role="tab">
+            🕒 Turnos Hoy y Mañana
+          </button>
+        </li>
+        <li class="nav-item" role="presentation" id="pacientes-tab-li">
+          <button class="nav-link" id="pacientes-tab" data-bs-toggle="tab" data-bs-target="#pacientes-pane" type="button" role="tab">
+            📋 Residentes y Fichas QR
+          </button>
+        </li>
+      </ul>
+    </div>
 
     <div class="tab-content" id="mainTabsContent">
 
-      <!-- Pestaña 1: Inventario -->
+      <!-- ======================================================================
+           PESTAÑA 1: INVENTARIO DE INSUMOS (SEGREGADO POR PERMISOS)
+           ====================================================================== -->
       <div class="tab-pane fade show active" id="inventario-pane" role="tabpanel">
 
-        <!-- Sección Medicamentos (TENS 1 y Admin) -->
-        <div id="sec-medicamentos" class="card-custom p-4 mb-4">
-          <div class="d-flex justify-content-between align-items-center mb-3">
+        <div id="alerta-sin-inventario" class="card-clinic p-5 text-center d-none mb-4">
+          <div class="fs-1 mb-2">🔒</div>
+          <h5 class="fw-bold text-dark">Sin módulos de inventario asignados</h5>
+          <p class="text-secondary small mb-0">El Administrador aún no ha habilitado acceso a Medicamentos ni Artículos de Aseo para este usuario.</p>
+        </div>
+
+        <!-- Sección Medicamentos -->
+        <div id="sec-medicamentos" class="card-clinic p-4 mb-4">
+          <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
             <div>
-              <h4 class="m-0 text-light fw-bold">💊 Medicamentos Antidepresivos y Psicofármacos</h4>
-              <small class="text-secondary">Control por pauta. Stock Mínimo Estricto: 10 Cajas</small>
+              <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle mb-1">Área Clínica y Enfermería</span>
+              <h4 class="m-0 text-dark fw-bold">💊 Medicamentos Antidepresivos y Psicofármacos</h4>
+              <small class="text-secondary">Control por pauta médica. Stock Mínimo de Seguridad: 10 Cajas</small>
             </div>
-            <button class="btn btn-success fw-bold btn-sm px-3 admin-only" data-bs-toggle="modal" data-bs-target="#modalAgregarMedicamento">+ Agregar Medicamento</button>
+            <button class="btn btn-role-primary btn-sm px-3 py-2 perm-stock-only" data-bs-toggle="modal" data-bs-target="#modalAgregarMedicamento">
+              + Reponer / Agregar Fármaco
+            </button>
           </div>
 
           <div class="table-responsive">
-            <table class="table table-dark-custom table-hover align-middle">
+            <table class="table table-clinic align-middle mb-0">
               <thead>
                 <tr>
                   <th>Producto / Fármaco</th>
                   <th>Stock Actual</th>
                   <th>Prioridad</th>
                   <th>Pauta de Administración Médica</th>
-                  <th class="text-end">Acciones de Uso</th>
+                  <th class="text-end">Registro de Consumo</th>
                 </tr>
               </thead>
               <tbody id="tabla-medicamentos"></tbody>
@@ -77,25 +436,28 @@
           </div>
         </div>
 
-        <!-- Sección Aseo (TENS AA y Admin) -->
-        <div id="sec-aseo" class="card-custom p-4">
-          <div class="d-flex justify-content-between align-items-center mb-3">
+        <!-- Sección Aseo -->
+        <div id="sec-aseo" class="card-clinic p-4">
+          <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
             <div>
-              <h4 class="m-0 text-light fw-bold">🧹 Artículos de Aseo e Higiene</h4>
-              <small class="text-secondary">Control por prioridad (Alta: 8-10, Media: 6, Baja: 4 unidades)</small>
+              <span class="badge bg-success-subtle text-success-emphasis border border-success-subtle mb-1">Área Higiene y Apoyo</span>
+              <h4 class="m-0 text-dark fw-bold">🧼 Artículos de Aseo e Higienización Clínica</h4>
+              <small class="text-secondary">Control operativo por prioridad (Alta: 8-10, Media: 6, Baja: 4 unidades)</small>
             </div>
-            <button class="btn btn-success fw-bold btn-sm px-3 admin-only" data-bs-toggle="modal" data-bs-target="#modalAgregarAseo">+ Agregar Artículo de Aseo</button>
+            <button class="btn btn-role-primary btn-sm px-3 py-2 perm-stock-only" data-bs-toggle="modal" data-bs-target="#modalAgregarAseo">
+              + Reponer / Agregar Artículo
+            </button>
           </div>
 
           <div class="table-responsive">
-            <table class="table table-dark-custom table-hover align-middle">
+            <table class="table table-clinic align-middle mb-0">
               <thead>
                 <tr>
                   <th>Artículo de Limpieza</th>
                   <th>Stock Actual</th>
                   <th>Prioridad</th>
                   <th>Uso y Aplicación</th>
-                  <th class="text-end">Acciones de Uso</th>
+                  <th class="text-end">Registro de Consumo</th>
                 </tr>
               </thead>
               <tbody id="tabla-aseo"></tbody>
@@ -105,44 +467,76 @@
 
       </div>
 
-      <!-- Pestaña 2: Personal -->
+      <!-- ======================================================================
+           PESTAÑA 2: TURNOS DINÁMICOS CON MOVIMIENTO + PROYECCIÓN MAÑANA
+           ====================================================================== -->
       <div class="tab-pane fade" id="residentes-pane" role="tabpanel">
-        <div class="card-custom p-4 mb-4">
-          <div class="d-flex justify-content-between align-items-center mb-3">
+        
+        <!-- Bloque 1: Turnos de Hoy en Vivo -->
+        <div class="card-clinic p-4 mb-4">
+          <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3 pb-3 border-bottom">
             <div>
-              <h4 class="text-light fw-bold mb-0">🕒 Personal de Turno para Hoy (<span id="lbl-dia-actual">Cargando...</span>)</h4>
-              <small class="text-secondary">Visualización dinámica en tiempo real según el día de la semana</small>
+              <div class="d-flex align-items-center gap-2 mb-1">
+                <span class="badge bg-success-subtle text-success border border-success-subtle px-3 py-1 rounded-pill fw-bold">
+                  <span class="pulse-dot"></span>MONITOR EN VIVO
+                </span>
+                <span id="reloj-vivo-turnos" class="badge bg-light text-dark border font-monospace px-3 py-1">--:--:--</span>
+              </div>
+              <h4 class="text-dark fw-bold mb-0">🕒 Personal de Turno Hoy — <span id="lbl-dia-actual" class="text-primary">Cargando...</span></h4>
+              <small class="text-secondary">Detección automática de jornada laboral activa y bloques de colación en curso</small>
             </div>
-            <span class="badge bg-success px-3 py-2">En Tiempo Real</span>
+
+            <div class="d-flex flex-wrap align-items-center gap-2">
+              <div class="btn-group btn-group-sm" role="group">
+                <button type="button" class="btn btn-outline-primary active fw-semibold" onclick="filtrarTurnosHoy('todos', this)">Todos (<span id="cnt-turnos-todos">0</span>)</button>
+                <button type="button" class="btn btn-outline-success fw-semibold" onclick="filtrarTurnosHoy('activos', this)">En Turno Hoy (<span id="cnt-turnos-activos">0</span>)</button>
+                <button type="button" class="btn btn-outline-secondary fw-semibold" onclick="filtrarTurnosHoy('libre', this)">Día Libre (<span id="cnt-turnos-libre">0</span>)</button>
+              </div>
+              <button type="button" class="btn btn-role-primary btn-sm px-3 supervision-only" onclick="abrirModalNuevoTurno()">
+                + Agregar Turno
+              </button>
+            </div>
           </div>
 
-          <div class="table-responsive">
-            <table class="table table-dark-custom table-hover align-middle">
-              <thead>
-                <tr>
-                  <th>Nombre del Personal</th>
-                  <th>Rol / Cargo</th>
-                  <th>Área de Desempeño</th>
-                  <th>Horario de Trabajo</th>
-                  <th>Horario de Colación</th>
-                  <th>Estado Hoy</th>
-                </tr>
-              </thead>
-              <tbody id="tabla-personal"></tbody>
-            </table>
+          <div class="row g-3" id="grid-personal-hoy">
+            <!-- Tarjetas dinámicas animadas cargadas por app.js -->
           </div>
         </div>
+
+        <!-- Bloque 2: Proyección del Día Siguiente (Relevos de Mañana) -->
+        <div class="card-clinic p-4" style="border-top: 4px solid var(--role-primary);">
+          <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+            <div>
+              <span class="badge-role-area d-inline-block mb-1">📅 Planificación Anticipada de Relevo</span>
+              <h4 class="text-dark fw-bold mb-0">🌅 Personal Programado para Mañana — <span id="lbl-dia-manana" class="text-primary">Cargando...</span></h4>
+              <small class="text-secondary">Visualización preventiva del equipo entrante y continuidad de turnos para la próxima jornada</small>
+            </div>
+            <span id="badge-total-manana" class="badge bg-primary-subtle text-primary border border-primary-subtle px-3 py-2 fs-6">
+              0 Funcionarios Entrantes
+            </span>
+          </div>
+
+          <div class="row g-3" id="grid-personal-manana">
+            <!-- Tarjetas dinámicas del día siguiente cargadas por app.js -->
+          </div>
+        </div>
+
       </div>
 
-      <!-- Pestaña 3: Residentes y QR (TENS 1 y Admin) -->
+      <!-- ======================================================================
+           PESTAÑA 3: RESIDENTES MENORES Y FICHAS QR
+           ====================================================================== -->
       <div class="tab-pane fade" id="pacientes-pane" role="tabpanel">
-        <div class="card-custom p-4">
-          <div class="d-flex justify-content-between align-items-center mb-3">
+        <div class="card-clinic p-4">
+          <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
             <div>
-              <h4 class="text-light fw-bold mb-1">📋 Residentes Menores y Fichas Digitales (Escaneo QR)</h4>
-              <p class="text-secondary small mb-0">Escanee la imagen QR desde la cámara del celular para desplegar la ficha clínica oficial.</p>
+              <span class="badge-role-area d-inline-block mb-1">Identificación Clínica Móvil</span>
+              <h4 class="text-dark fw-bold mb-1">📋 Residentes Menores y Fichas Digitales (Escaneo QR)</h4>
+              <p class="text-secondary small mb-0">Escanee el código QR con cualquier teléfono móvil para abrir o descargar la ficha clínica HD.</p>
             </div>
-            <button class="btn btn-success fw-bold btn-sm px-3 admin-only" data-bs-toggle="modal" data-bs-target="#modalAgregarPaciente">+ Registrar Nueva Paciente</button>
+            <button class="btn btn-role-primary fw-bold btn-sm px-3 py-2 perm-edit-pac-only" data-bs-toggle="modal" data-bs-target="#modalAgregarPaciente">
+              + Registrar Nueva Residente
+            </button>
           </div>
 
           <div class="row g-4" id="pacientes-container">
@@ -154,27 +548,135 @@
     </div>
   </div>
 
-  <!-- Modal Alerta Stock Crítico -->
+  <!-- ==========================================================================
+       MODAL 1: REPORTE DE PRODUCTOS FALTANTES Y STOCK CRÍTICO (Atajo: Alt + F)
+       ========================================================================== -->
+  <div class="modal fade" id="modalReporteFaltantes" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+      <div class="modal-content bg-white text-dark border-0 shadow-lg rounded-4">
+        <div class="modal-header bg-danger text-white rounded-top-4">
+          <div>
+            <h5 class="modal-title fw-bold mb-0">🚨 Informe de Productos Faltantes y Stock Crítico</h5>
+            <small class="opacity-75">Detección automática de insumos agotados o bajo su stock mínimo de seguridad (Atajo: Alt + F)</small>
+          </div>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body p-4">
+          <div class="row g-3 mb-4">
+            <div class="col-md-4">
+              <div class="p-3 rounded-3 bg-danger-subtle border border-danger-subtle text-center">
+                <small class="text-danger-emphasis fw-semibold d-block">Productos Agotados (Stock 0)</small>
+                <h3 id="lbl-faltantes-agotados" class="fw-bold text-danger m-0">0</h3>
+              </div>
+            </div>
+            <div class="col-md-4">
+              <div class="p-3 rounded-3 bg-warning-subtle border border-warning-subtle text-center">
+                <small class="text-warning-emphasis fw-semibold d-block">En Nivel Crítico (≤ Mínimo)</small>
+                <h3 id="lbl-faltantes-bajos" class="fw-bold text-warning-emphasis m-0">0</h3>
+              </div>
+            </div>
+            <div class="col-md-4">
+              <div class="p-3 rounded-3 bg-primary-subtle border border-primary-subtle text-center">
+                <small class="text-primary-emphasis fw-semibold d-block">Inversión Estimada Reposición</small>
+                <h3 id="lbl-faltantes-costo" class="fw-bold text-primary m-0">$0 CLP</h3>
+              </div>
+            </div>
+          </div>
+
+          <div class="table-responsive">
+            <table class="table table-clinic align-middle small">
+              <thead>
+                <tr>
+                  <th>Estado</th>
+                  <th>Prioridad</th>
+                  <th>Producto Faltante</th>
+                  <th>Categoría</th>
+                  <th>Stock Actual / Mínimo</th>
+                  <th>Faltante para Óptimo</th>
+                  <th>Costo Reposición</th>
+                </tr>
+              </thead>
+              <tbody id="tabla-reporte-faltantes-body"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="modal-footer bg-light rounded-bottom-4 d-flex justify-content-between">
+          <button class="btn btn-download-report btn-sm px-4 py-2" onclick="descargarFaltantesCSV()">
+            📥 Descargar Informe (.csv)
+          </button>
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cerrar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==========================================================================
+       MODAL 2: REPORTE CONSOLIDADO POR CATEGORÍA (Atajo: Alt + C)
+       ========================================================================== -->
+  <div class="modal fade" id="modalReporteCategorias" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+      <div class="modal-content bg-white text-dark border-0 shadow-lg rounded-4">
+        <div class="modal-header text-white rounded-top-4" style="background: var(--role-gradient);">
+          <div>
+            <h5 class="modal-title fw-bold mb-0">📂 Informe Consolidado de Inventario y Consumo por Categoría</h5>
+            <small class="opacity-75">Comparativa operativa y valorizada entre Medicamentos y Artículos de Aseo (Atajo: Alt + C)</small>
+          </div>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body p-4">
+          <div class="row g-3 mb-4" id="cards-resumen-categorias"></div>
+
+          <h6 class="fw-bold text-dark mb-2">📋 Desglose Detallado por Categoría</h6>
+          <div class="table-responsive">
+            <table class="table table-clinic align-middle small">
+              <thead>
+                <tr>
+                  <th>Categoría</th>
+                  <th>Producto</th>
+                  <th>Stock Disponible</th>
+                  <th>Consumo Semanal</th>
+                  <th>Valor Unitario</th>
+                  <th>Valor Stock Actual</th>
+                  <th>Gasto Semanal</th>
+                </tr>
+              </thead>
+              <tbody id="tabla-reporte-categorias-body"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="modal-footer bg-light rounded-bottom-4 d-flex justify-content-between">
+          <button class="btn btn-download-report btn-sm px-4 py-2" onclick="descargarCategoriasCSV()">
+            📥 Descargar Informe (.csv)
+          </button>
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cerrar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==========================================================================
+       MODAL 3: ALERTA AUTOMÁTICA DE STOCK CRÍTICO AL INGRESAR
+       ========================================================================== -->
   <div class="modal fade" id="modalAlertaStock" tabindex="-1">
     <div class="modal-dialog modal-lg">
-      <div class="modal-content bg-dark text-light border-danger">
-        <div class="modal-header bg-danger text-white">
+      <div class="modal-content bg-white text-dark border-0 shadow-lg rounded-4">
+        <div class="modal-header bg-danger text-white rounded-top-4">
           <h5 class="modal-title fw-bold">⚠️ ALERTA DE STOCK CRÍTICO DE INSUMOS</h5>
           <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
         </div>
-        <div class="modal-body">
-          <p class="lead fs-6 mb-3 text-warning fw-bold">
-            Atención Administrador: Se han detectado productos en nivel crítico o por debajo de su stock mínimo de seguridad.
+        <div class="modal-body p-4">
+          <p class="fw-semibold text-danger mb-3">
+            Atención: Se han detectado productos en nivel crítico o por debajo de su stock mínimo de seguridad.
           </p>
 
           <div class="table-responsive mb-3">
-            <table class="table table-dark table-hover align-middle small">
+            <table class="table table-clinic align-middle small">
               <thead>
                 <tr>
                   <th>Producto</th>
                   <th>Estado Stock</th>
                   <th>Mínimo Requerido</th>
-                  <th>Recomendación Compra</th>
+                  <th>Sugerido a Comprar</th>
                   <th>Costo Estimado</th>
                 </tr>
               </thead>
@@ -182,134 +684,444 @@
             </table>
           </div>
 
-          <div class="p-3 rounded bg-black border border-warning d-flex justify-content-between align-items-center">
-            <span class="text-secondary fw-bold">Presupuesto Estimado de Reposición Total:</span>
-            <span id="lbl-alerta-presupuesto" class="fs-5 fw-bold text-warning">$0 CLP</span>
+          <div class="p-3 rounded-3 bg-warning-subtle border border-warning d-flex justify-content-between align-items-center">
+            <span class="text-dark fw-bold">Presupuesto Estimado de Reposición Total:</span>
+            <span id="lbl-alerta-presupuesto" class="fs-5 fw-bold text-danger">$0 CLP</span>
           </div>
         </div>
-        <div class="modal-footer border-secondary">
-          <button class="btn btn-warning fw-bold" data-bs-dismiss="modal" data-bs-toggle="modal" data-bs-target="#modalSupervision">🛡️ Ir al Panel Completo de Supervisión</button>
-          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Entendido / Entrar</button>
+        <div class="modal-footer bg-light rounded-bottom-4">
+          <button class="btn btn-role-primary fw-bold btn-sm" data-bs-dismiss="modal" data-bs-toggle="modal" data-bs-target="#modalSupervision">🛡️ Ir al Panel de Supervisión</button>
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Entendido</button>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- Modal Capa de Supervisión y Presupuesto -->
+  <!-- ==========================================================================
+       MODAL 4: PANEL DE SUPERVISIÓN, COBROS, USUARIOS, TURNOS Y ACTIVIDAD REMOTA
+       ========================================================================== -->
   <div class="modal fade" id="modalSupervision" tabindex="-1">
-    <div class="modal-dialog modal-xl">
-      <div class="modal-content bg-dark text-light border-warning">
-        <div class="modal-header border-secondary">
-          <h5 class="modal-title fw-bold text-warning">🛡️ Panel de Supervisión, Cobro por Consumo y Reposición</h5>
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+      <div class="modal-content bg-white text-dark border-0 shadow-lg rounded-4">
+        <div class="modal-header text-white rounded-top-4" style="background: var(--role-gradient);">
+          <div>
+            <h5 class="modal-title fw-bold mb-0">🛡️ Panel Ejecutivo de Supervisión, Cobros, Turnos y Usuarios</h5>
+            <small class="opacity-75">Monitoreo remoto en tiempo real de consumos, órdenes de compra, horarios y permisos de personal</small>
+          </div>
           <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
         </div>
-        <div class="modal-body">
-          <div class="row g-3 mb-4">
-            <div class="col-md-4">
-              <div class="p-3 rounded bg-black border border-info text-center">
-                <small class="text-secondary d-block">Monto Total Consumido (Para Cobro)</small>
-                <h3 id="lbl-super-gasto-consumo" class="fw-bold text-info m-0">$0 CLP</h3>
+        <div class="modal-body p-4">
+
+          <!-- Sub-pestañas dentro del Panel de Supervisión -->
+          <ul class="nav nav-tabs mb-4" id="supervisionSubTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+              <button class="nav-link active fw-bold" id="subtab-finanzas" data-bs-toggle="tab" data-bs-target="#pane-super-finanzas" type="button" role="tab">
+                💰 Cobros, Reposición y Mensajes
+              </button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link fw-bold" id="subtab-usuarios" data-bs-toggle="tab" data-bs-target="#pane-super-usuarios" type="button" role="tab">
+                👥 Gestión de Usuarios y Permisos
+              </button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link fw-bold" id="subtab-turnos" data-bs-toggle="tab" data-bs-target="#pane-super-turnos" type="button" role="tab">
+                🗓️ Gestión de Turnos
+              </button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link fw-bold" id="subtab-remoto" data-bs-toggle="tab" data-bs-target="#pane-super-remoto" type="button" role="tab">
+                📡 Actividad Remota
+              </button>
+            </li>
+          </ul>
+
+          <div class="tab-content">
+            <!-- SUB-PESTAÑA A: FINANZAS, REORDEN Y MENSAJES -->
+            <div class="tab-pane fade show active" id="pane-super-finanzas" role="tabpanel">
+              <div class="row g-3 mb-4">
+                <div class="col-md-4">
+                  <div class="p-3 rounded-3 bg-primary-subtle border border-primary-subtle text-center">
+                    <small class="text-primary-emphasis fw-semibold d-block">Monto Total Consumido (Para Cobro)</small>
+                    <h3 id="lbl-super-gasto-consumo" class="fw-bold text-primary m-0">$0 CLP</h3>
+                  </div>
+                </div>
+                <div class="col-md-4">
+                  <div class="p-3 rounded-3 bg-warning-subtle border border-warning-subtle text-center">
+                    <small class="text-warning-emphasis fw-semibold d-block">Presupuesto Orden de Compra</small>
+                    <h3 id="lbl-super-presupuesto" class="fw-bold text-warning-emphasis m-0">$0 CLP</h3>
+                  </div>
+                </div>
+                <div class="col-md-4">
+                  <div class="p-3 rounded-3 bg-danger-subtle border border-danger-subtle text-center">
+                    <small class="text-danger-emphasis fw-semibold d-block">Insumos bajo Stock Mínimo</small>
+                    <h3 id="lbl-super-alertas" class="fw-bold text-danger m-0">0 Productos</h3>
+                  </div>
+                </div>
+              </div>
+
+              <h6 class="fw-bold text-dark mb-2">📋 Detalle de Pedidos Sugeridos y Prioridad por Objeto</h6>
+              <div class="table-responsive mb-4">
+                <table class="table table-clinic align-middle small">
+                  <thead>
+                    <tr>
+                      <th>Prioridad</th>
+                      <th>Producto</th>
+                      <th>Categoría</th>
+                      <th>Stock / Mínimo</th>
+                      <th>Consumo Semanal</th>
+                      <th>Costo Consumido</th>
+                      <th>Sugerido Pedir</th>
+                      <th>Costo Reposición</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tabla-supervision-body"></tbody>
+                </table>
+              </div>
+
+              <h6 class="fw-bold text-dark mb-2">📩 Mensajes y Alertas Enviadas por el Personal</h6>
+              <div class="table-responsive bg-light p-2 rounded-3 border" style="max-height: 180px; overflow-y: auto;">
+                <table class="table table-sm mb-0 small bg-white">
+                  <thead>
+                    <tr>
+                      <th>Fecha</th>
+                      <th>Tipo</th>
+                      <th>Mensaje / Sugerencia</th>
+                      <th>Funcionario</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tabla-mensajes-body"></tbody>
+                </table>
               </div>
             </div>
-            <div class="col-md-4">
-              <div class="p-3 rounded bg-black border border-warning text-center">
-                <small class="text-secondary d-block">Presupuesto Orden de Compra</small>
-                <h3 id="lbl-super-presupuesto" class="fw-bold text-warning m-0">$0 CLP</h3>
+
+            <!-- SUB-PESTAÑA B: CREAR Y ELIMINAR USUARIOS CON PERMISOS Y TURNO -->
+            <div class="tab-pane fade" id="pane-super-usuarios" role="tabpanel">
+              <div class="row g-4">
+                <div class="col-lg-5">
+                  <div class="p-3 rounded-4 bg-light border">
+                    <h6 class="fw-bold text-primary mb-1">➕ Crear Nuevo Usuario / Reemplazo TENS</h6>
+                    <p class="small text-secondary mb-3">Defina sus accesos y opcionalmente agréguelo directo al calendario de turnos.</p>
+
+                    <form id="form-crear-usuario">
+                      <div class="mb-2">
+                        <label class="form-label small fw-semibold mb-1">Nombre Completo del Funcionario</label>
+                        <input type="text" id="new-user-nombre" class="form-control form-control-sm" placeholder="Ej: Francisca Muñoz (TENS)" required>
+                      </div>
+                      <div class="row g-2 mb-2">
+                        <div class="col-6">
+                          <label class="form-label small fw-semibold mb-1">Usuario Login</label>
+                          <input type="text" id="new-user-username" class="form-control form-control-sm" placeholder="Ej: tens2" required>
+                        </div>
+                        <div class="col-6">
+                          <label class="form-label small fw-semibold mb-1">Contraseña</label>
+                          <input type="text" id="new-user-password" class="form-control form-control-sm" placeholder="Ej: tens2026" required>
+                        </div>
+                      </div>
+                      <div class="row g-2 mb-2">
+                        <div class="col-6">
+                          <label class="form-label small fw-semibold mb-1">Cargo / Función</label>
+                          <input type="text" id="new-user-cargo" class="form-control form-control-sm" placeholder="Ej: TENS de Turno" required>
+                        </div>
+                        <div class="col-6">
+                          <label class="form-label small fw-semibold mb-1">Diseño / Paleta Visual</label>
+                          <select id="new-user-tema" class="form-select form-select-sm">
+                            <option value="tens">🩺 Cian Clínico (Enfermería)</option>
+                            <option value="aa">🧼 Verde Menta (Aseo / Apoyo)</option>
+                            <option value="admin">🛡️ Azul Ejecutivo (Supervisión)</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div class="p-2 bg-white rounded-3 border mb-2">
+                        <div class="small fw-bold text-dark mb-1">Facultades y Áreas Permitidas:</div>
+                        <div class="form-check form-switch small mb-1">
+                          <input class="form-check-input" type="checkbox" id="perm-med" checked>
+                          <label class="form-check-label" for="perm-med">💊 Ver y consumir <strong>Medicamentos</strong></label>
+                        </div>
+                        <div class="form-check form-switch small mb-1">
+                          <input class="form-check-input" type="checkbox" id="perm-aseo">
+                          <label class="form-check-label" for="perm-aseo">🧼 Ver y consumir <strong>Artículos de Aseo</strong></label>
+                        </div>
+                        <div class="form-check form-switch small mb-1">
+                          <input class="form-check-input" type="checkbox" id="perm-pac" checked>
+                          <label class="form-check-label" for="perm-pac">📋 Ver <strong>Residentes y Fichas QR</strong></label>
+                        </div>
+                        <div class="form-check form-switch small mb-1">
+                          <input class="form-check-input" type="checkbox" id="perm-edit-pac">
+                          <label class="form-check-label" for="perm-edit-pac">✏️ Crear, editar o egresar <strong>Residentes</strong></label>
+                        </div>
+                        <div class="form-check form-switch small mb-1">
+                          <input class="form-check-input" type="checkbox" id="perm-stock">
+                          <label class="form-check-label" for="perm-stock">📦 Reponer o agregar <strong>Nuevo Stock</strong></label>
+                        </div>
+                        <div class="form-check form-switch small">
+                          <input class="form-check-input" type="checkbox" id="perm-super">
+                          <label class="form-check-label text-primary fw-semibold" for="perm-super">🛡️ Acceso total a <strong>Supervisión, Cobros y Usuarios</strong></label>
+                        </div>
+                      </div>
+
+                      <div class="p-2 bg-primary-subtle rounded-3 border border-primary-subtle mb-3">
+                        <div class="form-check form-switch small">
+                          <input class="form-check-input" type="checkbox" id="chk-crear-con-turno" checked>
+                          <label class="form-check-label fw-bold text-primary-emphasis" for="chk-crear-con-turno">
+                            🗓️ Incluir también en cartelera de Turnos
+                          </label>
+                        </div>
+                        <div id="bloque-turno-nuevo-usuario" class="mt-2 pt-2 border-top border-primary-subtle">
+                          <div class="row g-2 mb-2">
+                            <div class="col-6">
+                              <label class="form-label small mb-0">Entrada</label>
+                              <input type="time" id="new-user-horario-ini" class="form-control form-control-sm" value="08:00">
+                            </div>
+                            <div class="col-6">
+                              <label class="form-label small mb-0">Salida</label>
+                              <input type="time" id="new-user-horario-fin" class="form-control form-control-sm" value="20:00">
+                            </div>
+                          </div>
+                          <div class="small fw-semibold mb-1">Días de Turno:</div>
+                          <div class="d-flex flex-wrap gap-2 small">
+                            <label><input type="checkbox" class="chk-dia-nuevo-user" value="Lunes" checked> Lun</label>
+                            <label><input type="checkbox" class="chk-dia-nuevo-user" value="Martes"> Mar</label>
+                            <label><input type="checkbox" class="chk-dia-nuevo-user" value="Miércoles" checked> Mié</label>
+                            <label><input type="checkbox" class="chk-dia-nuevo-user" value="Jueves"> Jue</label>
+                            <label><input type="checkbox" class="chk-dia-nuevo-user" value="Viernes" checked> Vie</label>
+                            <label><input type="checkbox" class="chk-dia-nuevo-user" value="Sábado"> Sáb</label>
+                            <label><input type="checkbox" class="chk-dia-nuevo-user" value="Domingo"> Dom</label>
+                          </div>
+                        </div>
+                      </div>
+
+                      <button type="submit" class="btn btn-role-primary btn-sm w-100 py-2">
+                        ✅ Crear Usuario y Habilitar Acceso
+                      </button>
+                    </form>
+                  </div>
+                </div>
+
+                <div class="col-lg-7">
+                  <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h6 class="fw-bold text-dark m-0">🔑 Cuentas Activas en la Plataforma</h6>
+                    <span class="badge bg-info-subtle text-info-emphasis border">Revocación Inmediata</span>
+                  </div>
+                  <p class="small text-secondary mb-3">Si un funcionario deja de trabajar en la clínica, elimine su cuenta para bloquear su acceso y conservar el historial de sus consumos.</p>
+
+                  <div class="table-responsive border rounded-3">
+                    <table class="table table-clinic align-middle small mb-0">
+                      <thead>
+                        <tr>
+                          <th>Funcionario / Usuario</th>
+                          <th>Diseño</th>
+                          <th>Permisos Habilitados</th>
+                          <th class="text-end">Control</th>
+                        </tr>
+                      </thead>
+                      <tbody id="tabla-usuarios-body"></tbody>
+                    </table>
+                  </div>
+                </div>
               </div>
             </div>
-            <div class="col-md-4">
-              <div class="p-3 rounded bg-black border border-danger text-center">
-                <small class="text-secondary d-block">Insumos bajo Stock Mínimo</small>
-                <h3 id="lbl-super-alertas" class="fw-bold text-danger m-0">0 Productos</h3>
+
+            <!-- SUB-PESTAÑA C: ADMINISTRACIÓN DE TURNOS EN TIEMPO REAL -->
+            <div class="tab-pane fade" id="pane-super-turnos" role="tabpanel">
+              <div class="d-flex justify-content-between align-items-center mb-3">
+                <div>
+                  <h6 class="fw-bold text-dark mb-0">🗓️ Cartelera Oficial de Turnos y Horarios del Personal</h6>
+                  <small class="text-secondary">Los cambios se reflejan en tiempo real en "Turnos Hoy y Mañana" para todo el equipo.</small>
+                </div>
+                <button type="button" class="btn btn-role-primary btn-sm px-3" onclick="abrirModalNuevoTurno()">
+                  + Agregar Nuevo Turno
+                </button>
+              </div>
+
+              <div class="table-responsive border rounded-3">
+                <table class="table table-clinic align-middle small mb-0">
+                  <thead>
+                    <tr>
+                      <th>Funcionario</th>
+                      <th>Cargo y Área</th>
+                      <th>Días Asignados</th>
+                      <th>Jornada</th>
+                      <th>Colación</th>
+                      <th class="text-end">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tabla-gestion-turnos-body"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- SUB-PESTAÑA D: MONITOREO REMOTO EN TIEMPO REAL -->
+            <div class="tab-pane fade" id="pane-super-remoto" role="tabpanel">
+              <div class="d-flex justify-content-between align-items-center mb-3">
+                <div>
+                  <h6 class="fw-bold text-dark mb-0">📡 Bitácora Remota de Consumos en Tiempo Real</h6>
+                  <small class="text-secondary">Cada descuento realizado por cualquier TENS o auxiliar se refleja automáticamente aquí.</small>
+                </div>
+                <button class="btn btn-outline-primary btn-sm fw-semibold" onclick="cargarActividadReciente()">
+                  🔄 Sincronizar Ahora
+                </button>
+              </div>
+
+              <div class="table-responsive border rounded-3">
+                <table class="table table-clinic align-middle small mb-0">
+                  <thead>
+                    <tr>
+                      <th>Fecha y Hora</th>
+                      <th>Funcionario Responsable</th>
+                      <th>Categoría</th>
+                      <th>Producto Consumido</th>
+                      <th>Cantidad</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tabla-actividad-remota-body"></tbody>
+                </table>
               </div>
             </div>
           </div>
 
-          <h6 class="fw-bold text-light mb-2">📋 Detalle de Pedidos Sugeridos y Prioridad por Objeto</h6>
-          <div class="table-responsive mb-4">
-            <table class="table table-dark table-hover align-middle small">
-              <thead>
-                <tr>
-                  <th>Prioridad</th>
-                  <th>Producto</th>
-                  <th>Categoría</th>
-                  <th>Stock / Mínimo</th>
-                  <th>Consumo Semanal</th>
-                  <th>Costo Consumido (Cobro)</th>
-                  <th>Sugerido a Pedir</th>
-                  <th>Costo Reposición</th>
-                </tr>
-              </thead>
-              <tbody id="tabla-supervision-body"></tbody>
-            </table>
-          </div>
-
-          <h6 class="fw-bold text-light mb-2">📩 Mensajes y Sugerencias del Personal TENS</h6>
-          <div class="table-responsive bg-black p-2 rounded border border-secondary" style="max-height: 180px; overflow-y: auto;">
-            <table class="table table-dark table-sm mb-0 small">
-              <thead>
-                <tr>
-                  <th>Fecha</th>
-                  <th>Tipo</th>
-                  <th>Mensaje / Sugerencia</th>
-                  <th>Usuario TENS</th>
-                </tr>
-              </thead>
-              <tbody id="tabla-mensajes-body"></tbody>
-            </table>
-          </div>
         </div>
-        <div class="modal-footer border-secondary">
-          <button class="btn btn-success fw-bold" onclick="exportarReporteSupervisionCSV()">📥 Exportar Informe a Excel / CSV</button>
-          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
+        <div class="modal-footer bg-light rounded-bottom-4 d-flex justify-content-between">
+          <button class="btn btn-download-report btn-sm px-4 py-2" onclick="descargarSupervisionCSV()">
+            📥 Descargar Informe (.csv)
+          </button>
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cerrar</button>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- Modal Enviar Mensaje -->
-  <div class="modal fade" id="modalMensajeTens" tabindex="-1">
+  <!-- ==========================================================================
+       MODAL 5: CREAR O EDITAR TURNO DE PERSONAL (SOLO ADMINISTRADOR)
+       ========================================================================== -->
+  <div class="modal fade" id="modalGestionTurno" tabindex="-1">
     <div class="modal-dialog">
-      <div class="modal-content bg-dark text-light border-warning">
-        <div class="modal-header border-secondary">
-          <h5 class="modal-title fw-bold">📩 Enviar Mensaje / Sugerencia a Jefatura</h5>
+      <div class="modal-content bg-white text-dark border-0 shadow-lg rounded-4">
+        <div class="modal-header text-white rounded-top-4" style="background: var(--role-gradient);">
+          <h5 class="modal-title fw-bold" id="modalGestionTurnoTitulo">🗓️ Agregar Turno de Personal</h5>
           <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
         </div>
-        <form id="form-mensaje-tens">
-          <div class="modal-body">
+        <form id="form-gestion-turno">
+          <input type="hidden" id="turno-id">
+          <div class="modal-body p-4">
             <div class="mb-3">
-              <label class="form-label text-secondary">Tipo de Notificación</label>
-              <select id="tens-msg-tipo" class="form-select bg-black text-light border-secondary">
-                <option value="Falta Stock / Reposición">⚠️ Notificar Falta de Stock / Mínimo Afectado</option>
-                <option value="Sugerencia Insumo Nuevo">💡 Sugerencia de Producto Nuevo</option>
-                <option value="Otro">📝 Otro Comentario / Aviso de Turno</option>
-              </select>
+              <label class="form-label small fw-semibold">Nombre Completo del Funcionario</label>
+              <input type="text" id="turno-nombre" class="form-control" placeholder="Ej: Francisca Muñoz (TENS)" required>
             </div>
-            <div class="mb-3">
-              <label class="form-label text-secondary">Detalle del Mensaje</label>
-              <textarea id="tens-msg-texto" class="form-control bg-black text-light border-secondary" rows="4" placeholder="Escriba aquí si falta algún producto o una recomendación..." required></textarea>
+            <div class="row g-2 mb-3">
+              <div class="col-6">
+                <label class="form-label small fw-semibold">Cargo / Rol</label>
+                <input type="text" id="turno-rol" class="form-control" placeholder="Ej: TENS de Turno" required>
+              </div>
+              <div class="col-6">
+                <label class="form-label small fw-semibold">Área Clínica</label>
+                <select id="turno-area" class="form-select">
+                  <option value="Enfermería y Fármacos">Enfermería y Fármacos</option>
+                  <option value="Enfermería y Residencia">Enfermería y Residencia</option>
+                  <option value="Aseo e Higiene">Aseo e Higiene</option>
+                  <option value="Cocina y Nutrición">Cocina y Nutrición</option>
+                  <option value="Jefatura y Supervisión">Jefatura y Supervisión</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="row g-2 mb-3">
+              <div class="col-6">
+                <label class="form-label small fw-semibold">⏰ Hora Entrada</label>
+                <input type="time" id="turno-hora-inicio" class="form-control" value="08:00" required>
+              </div>
+              <div class="col-6">
+                <label class="form-label small fw-semibold">⏰ Hora Salida</label>
+                <input type="time" id="turno-hora-fin" class="form-control" value="20:00" required>
+              </div>
+            </div>
+
+            <div class="row g-2 mb-3">
+              <div class="col-6">
+                <label class="form-label small fw-semibold">🍎 Inicio Colación</label>
+                <input type="time" id="turno-colacion-inicio" class="form-control" value="13:30" required>
+              </div>
+              <div class="col-6">
+                <label class="form-label small fw-semibold">🍎 Fin Colación</label>
+                <input type="time" id="turno-colacion-fin" class="form-control" value="14:30" required>
+              </div>
+            </div>
+
+            <div class="p-3 bg-light rounded-3 border">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <span class="small fw-bold text-dark">📅 Días de Turno Asignados:</span>
+                <label class="small text-primary fw-semibold mb-0">
+                  <input type="checkbox" id="turno-todos-dias"> Todos los días
+                </label>
+              </div>
+              <div class="d-flex flex-wrap gap-3 small">
+                <label><input type="checkbox" class="chk-dia-turno" value="Lunes"> Lunes</label>
+                <label><input type="checkbox" class="chk-dia-turno" value="Martes"> Martes</label>
+                <label><input type="checkbox" class="chk-dia-turno" value="Miércoles"> Miércoles</label>
+                <label><input type="checkbox" class="chk-dia-turno" value="Jueves"> Jueves</label>
+                <label><input type="checkbox" class="chk-dia-turno" value="Viernes"> Viernes</label>
+                <label><input type="checkbox" class="chk-dia-turno" value="Sábado"> Sábado</label>
+                <label><input type="checkbox" class="chk-dia-turno" value="Domingo"> Domingo</label>
+              </div>
             </div>
           </div>
-          <div class="modal-footer border-secondary">
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
-            <button type="submit" class="btn btn-warning fw-bold">Enviar a Jefatura</button>
+          <div class="modal-footer bg-light rounded-bottom-4">
+            <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+            <button type="submit" class="btn btn-role-primary btn-sm px-4">💾 Guardar Turno</button>
           </div>
         </form>
       </div>
     </div>
   </div>
 
-  <!-- Modal Consumo Semanal -->
+  <!-- ==========================================================================
+       MODAL 6: ENVIAR MENSAJE / ALERTA A JEFATURA
+       ========================================================================== -->
+  <div class="modal fade" id="modalMensajeTens" tabindex="-1">
+    <div class="modal-dialog">
+      <div class="modal-content bg-white text-dark border-0 shadow-lg rounded-4">
+        <div class="modal-header bg-warning-subtle border-bottom rounded-top-4">
+          <h5 class="modal-title fw-bold text-dark">📩 Enviar Mensaje / Aviso a Jefatura</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <form id="form-mensaje-tens">
+          <div class="modal-body p-4">
+            <div class="mb-3">
+              <label class="form-label fw-semibold small text-secondary">Tipo de Notificación</label>
+              <select id="tens-msg-tipo" class="form-select">
+                <option value="Falta Stock / Reposición">⚠️ Notificar Falta de Stock / Mínimo Afectado</option>
+                <option value="Sugerencia Insumo Nuevo">💡 Sugerencia de Producto Nuevo</option>
+                <option value="Otro">📝 Otro Comentario / Novedad de Turno</option>
+              </select>
+            </div>
+            <div class="mb-3">
+              <label class="form-label fw-semibold small text-secondary">Detalle del Mensaje</label>
+              <textarea id="tens-msg-texto" class="form-control" rows="4" placeholder="Escriba aquí si falta algún producto o una novedad de turno..." required></textarea>
+            </div>
+          </div>
+          <div class="modal-footer bg-light rounded-bottom-4">
+            <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+            <button type="submit" class="btn btn-warning fw-bold btn-sm px-3">Enviar a Jefatura</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==========================================================================
+       MODAL 7: CONSUMO SEMANAL VALORIZADO
+       ========================================================================== -->
   <div class="modal fade" id="modalReporte" tabindex="-1">
     <div class="modal-dialog modal-xl">
-      <div class="modal-content bg-dark text-light border-secondary">
-        <div class="modal-header border-secondary">
-          <h5 class="modal-title fw-bold">📊 Detalle de Consumo Semanal Valorizado por TENS</h5>
+      <div class="modal-content bg-white text-dark border-0 shadow-lg rounded-4">
+        <div class="modal-header text-white rounded-top-4" style="background: var(--role-gradient);">
+          <h5 class="modal-title fw-bold">📊 Detalle de Consumo Semanal Valorizado por Funcionario</h5>
           <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
         </div>
-        <div class="modal-body">
+        <div class="modal-body p-4">
           <div class="table-responsive mb-3">
-            <table class="table table-dark table-hover align-middle small">
+            <table class="table table-clinic align-middle small">
               <thead>
                 <tr>
                   <th>Producto</th>
@@ -324,135 +1136,139 @@
               <tbody id="tabla-reporte-body"></tbody>
             </table>
           </div>
-          <div class="p-3 rounded bg-black border border-info d-flex justify-content-between align-items-center">
-            <span class="text-secondary fw-bold">Monto Total Real Consumido a Cobrar:</span>
-            <span id="lbl-reporte-total-cobro" class="fs-5 fw-bold text-info">$0 CLP</span>
+          <div class="p-3 rounded-3 bg-primary-subtle border border-primary-subtle d-flex justify-content-between align-items-center">
+            <span class="text-dark fw-bold">Monto Total Real Consumido a Cobrar:</span>
+            <span id="lbl-reporte-total-cobro" class="fs-5 fw-bold text-primary">$0 CLP</span>
           </div>
         </div>
-        <div class="modal-footer border-secondary">
-          <button class="btn btn-outline-success btn-sm fw-bold" onclick="exportarConsumoCSV()">📥 Descargar CSV / Excel</button>
+        <div class="modal-footer bg-light rounded-bottom-4 d-flex justify-content-between">
+          <button class="btn btn-download-report btn-sm px-4 py-2" onclick="descargarConsumoCSV()">
+            📥 Descargar Informe (.csv)
+          </button>
           <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cerrar</button>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- Modal Agregar Paciente (Apuntando a public/images/) -->
+  <!-- ==========================================================================
+       MODALES GESTIÓN RESIDENTES (AGREGAR Y EDITAR)
+       ========================================================================== -->
   <div class="modal fade" id="modalAgregarPaciente" tabindex="-1">
     <div class="modal-dialog">
-      <div class="modal-content bg-dark text-light border-success">
-        <div class="modal-header border-secondary">
-          <h5 class="modal-title fw-bold text-success">➕ Registrar Nueva Paciente</h5>
+      <div class="modal-content bg-white text-dark border-0 shadow-lg rounded-4">
+        <div class="modal-header text-white rounded-top-4" style="background: var(--role-gradient);">
+          <h5 class="modal-title fw-bold">➕ Registrar Nueva Residente</h5>
           <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
         </div>
         <form id="form-agregar-paciente">
-          <div class="modal-body">
+          <div class="modal-body p-4">
             <div class="mb-3">
-              <label class="form-label text-secondary">Nombre Completo</label>
-              <input type="text" id="pac-nombre" class="form-control bg-black text-light border-secondary" placeholder="Ej: Sofía Henríquez Silva" required>
+              <label class="form-label small fw-semibold">Nombre Completo</label>
+              <input type="text" id="pac-nombre" class="form-control" placeholder="Ej: Sofía Henríquez Silva" required>
             </div>
             <div class="mb-3">
-              <label class="form-label text-secondary">RUT</label>
-              <input type="text" id="pac-rut" class="form-control bg-black text-light border-secondary" placeholder="Ej: 21.345.678-9" required>
+              <label class="form-label small fw-semibold">RUT</label>
+              <input type="text" id="pac-rut" class="form-control" placeholder="Ej: 21.345.678-9" required>
             </div>
             <div class="mb-3">
-              <label class="form-label text-secondary">Edad (Años)</label>
-              <input type="number" id="pac-edad" class="form-control bg-black text-light border-secondary" value="15" min="1" max="17" required>
+              <label class="form-label small fw-semibold">Edad (Años)</label>
+              <input type="number" id="pac-edad" class="form-control" value="15" min="1" max="17" required>
             </div>
             <div class="mb-3">
-              <label class="form-label text-secondary">Diagnóstico Médico Principal</label>
-              <input type="text" id="pac-diag" class="form-control bg-black text-light border-secondary" placeholder="Ej: Trastorno Ansioso Depresivo" required>
+              <label class="form-label small fw-semibold">Diagnóstico Médico Principal</label>
+              <input type="text" id="pac-diag" class="form-control" placeholder="Ej: Trastorno Ansioso Depresivo" required>
             </div>
             <div class="mb-3">
-              <label class="form-label text-secondary">Nombre del Archivo de Imagen (en public/images/)</label>
-              <input type="text" id="pac-foto" class="form-control bg-black text-light border-secondary" placeholder="Ej: ficha3.png (o dejar en blanco para ficha1.png)">
-              <small class="text-muted">Guarde la imagen dentro de la carpeta <code>public/images/</code>.</small>
+              <label class="form-label small fw-semibold">Archivo de Ficha Gráfica (en public/images/)</label>
+              <input type="text" id="pac-foto" class="form-control" placeholder="Ej: ficha3.png (vacío usa ficha1.png)">
             </div>
           </div>
-          <div class="modal-footer border-secondary">
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
-            <button type="submit" class="btn btn-success fw-bold">Guardar Residente</button>
+          <div class="modal-footer bg-light rounded-bottom-4">
+            <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+            <button type="submit" class="btn btn-role-primary btn-sm px-3">Guardar Residente</button>
           </div>
         </form>
       </div>
     </div>
   </div>
 
-  <!-- Modal Editar Paciente -->
   <div class="modal fade" id="modalEditarPaciente" tabindex="-1">
     <div class="modal-dialog">
-      <div class="modal-content bg-dark text-light border-warning">
-        <div class="modal-header border-secondary">
-          <h5 class="modal-title fw-bold text-warning">✏️ Editar Datos de Paciente</h5>
-          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      <div class="modal-content bg-white text-dark border-0 shadow-lg rounded-4">
+        <div class="modal-header bg-warning-subtle rounded-top-4">
+          <h5 class="modal-title fw-bold text-dark">✏️ Editar Datos de Residente</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
         <form id="form-editar-paciente">
           <input type="hidden" id="edit-pac-id">
-          <div class="modal-body">
+          <div class="modal-body p-4">
             <div class="mb-3">
-              <label class="form-label text-secondary">Nombre Completo</label>
-              <input type="text" id="edit-pac-nombre" class="form-control bg-black text-light border-secondary" required>
+              <label class="form-label small fw-semibold">Nombre Completo</label>
+              <input type="text" id="edit-pac-nombre" class="form-control" required>
             </div>
             <div class="mb-3">
-              <label class="form-label text-secondary">RUT</label>
-              <input type="text" id="edit-pac-rut" class="form-control bg-black text-light border-secondary" required>
+              <label class="form-label small fw-semibold">RUT</label>
+              <input type="text" id="edit-pac-rut" class="form-control" required>
             </div>
             <div class="mb-3">
-              <label class="form-label text-secondary">Edad (Años)</label>
-              <input type="number" id="edit-pac-edad" class="form-control bg-black text-light border-secondary" min="1" max="18" required>
+              <label class="form-label small fw-semibold">Edad (Años)</label>
+              <input type="number" id="edit-pac-edad" class="form-control" min="1" max="18" required>
             </div>
             <div class="mb-3">
-              <label class="form-label text-secondary">Diagnóstico Médico</label>
-              <input type="text" id="edit-pac-diag" class="form-control bg-black text-light border-secondary" required>
+              <label class="form-label small fw-semibold">Diagnóstico Médico</label>
+              <input type="text" id="edit-pac-diag" class="form-control" required>
             </div>
             <div class="mb-3">
-              <label class="form-label text-secondary">Nombre del Archivo de Imagen</label>
-              <input type="text" id="edit-pac-foto" class="form-control bg-black text-light border-secondary">
+              <label class="form-label small fw-semibold">Nombre del Archivo de Imagen</label>
+              <input type="text" id="edit-pac-foto" class="form-control">
             </div>
           </div>
-          <div class="modal-footer border-secondary">
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
-            <button type="submit" class="btn btn-warning fw-bold">Guardar Cambios</button>
+          <div class="modal-footer bg-light rounded-bottom-4">
+            <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+            <button type="submit" class="btn btn-warning fw-bold btn-sm px-3">Guardar Cambios</button>
           </div>
         </form>
       </div>
     </div>
   </div>
 
-  <!-- Modales Adición Inventario -->
+  <!-- ==========================================================================
+       MODALES REPOSICIÓN DE STOCK (MEDICAMENTOS Y ASEO)
+       ========================================================================== -->
   <div class="modal fade" id="modalAgregarMedicamento" tabindex="-1">
     <div class="modal-dialog">
-      <div class="modal-content bg-dark text-light border-secondary">
-        <div class="modal-header border-secondary">
-          <h5 class="modal-title fw-bold">Agregar / Sumar Medicamento</h5>
+      <div class="modal-content bg-white text-dark border-0 shadow-lg rounded-4">
+        <div class="modal-header text-white rounded-top-4" style="background: var(--role-gradient);">
+          <h5 class="modal-title fw-bold">💊 Agregar / Sumar Medicamento</h5>
           <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
         </div>
         <form id="form-med">
-          <div class="modal-body">
+          <div class="modal-body p-4">
             <div class="mb-3">
-              <label class="form-label text-secondary">Seleccionar Medicamento Existente</label>
-              <select id="med-select" class="form-select bg-black text-light border-secondary" required></select>
+              <label class="form-label small fw-semibold">Seleccionar Medicamento Existente</label>
+              <select id="med-select" class="form-select" required></select>
             </div>
             <div id="div-med-nuevo" class="mb-3" style="display: none;">
-              <label class="form-label text-warning fw-bold">Nombre del Nuevo Fármaco</label>
-              <input type="text" id="med-nombre-nuevo" class="form-control bg-black text-light border-warning">
+              <label class="form-label small text-primary fw-bold">Nombre del Nuevo Fármaco</label>
+              <input type="text" id="med-nombre-nuevo" class="form-control border-primary">
             </div>
             <div class="mb-3">
-              <label class="form-label text-secondary">Cantidad de Cajas a Sumar</label>
-              <input type="number" id="med-cantidad" class="form-control bg-black text-light border-secondary" value="1" min="1" required>
+              <label class="form-label small fw-semibold">Cantidad de Cajas a Sumar</label>
+              <input type="number" id="med-cantidad" class="form-control" value="1" min="1" required>
             </div>
             <div class="mb-3">
-              <label class="form-label text-secondary">Precio Unitario ($ CLP)</label>
-              <input type="number" id="med-precio" class="form-control bg-black text-light border-secondary" value="8500" min="0">
+              <label class="form-label small fw-semibold">Precio Unitario ($ CLP)</label>
+              <input type="number" id="med-precio" class="form-control" value="8500" min="0">
             </div>
             <div class="mb-3">
-              <label class="form-label text-secondary">Pauta Horaria</label>
-              <input type="text" id="med-pauta" class="form-control bg-black text-light border-secondary" value="Mañana: 1, Tarde: 0, Noche: 1 (sueño), SOS: 1">
+              <label class="form-label small fw-semibold">Pauta Horaria</label>
+              <input type="text" id="med-pauta" class="form-control" value="Mañana: 1, Tarde: 0, Noche: 1 (sueño), SOS: 1">
             </div>
           </div>
-          <div class="modal-footer border-secondary">
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
-            <button type="submit" class="btn btn-success fw-bold">Guardar</button>
+          <div class="modal-footer bg-light rounded-bottom-4">
+            <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+            <button type="submit" class="btn btn-role-primary btn-sm px-3">Guardar</button>
           </div>
         </form>
       </div>
@@ -461,39 +1277,49 @@
 
   <div class="modal fade" id="modalAgregarAseo" tabindex="-1">
     <div class="modal-dialog">
-      <div class="modal-content bg-dark text-light border-secondary">
-        <div class="modal-header border-secondary">
-          <h5 class="modal-title fw-bold">Agregar / Sumar Artículo de Aseo</h5>
+      <div class="modal-content bg-white text-dark border-0 shadow-lg rounded-4">
+        <div class="modal-header text-white rounded-top-4" style="background: var(--role-gradient);">
+          <h5 class="modal-title fw-bold">🧼 Agregar / Sumar Artículo de Aseo</h5>
           <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
         </div>
         <form id="form-aseo">
-          <div class="modal-body">
+          <div class="modal-body p-4">
             <div class="mb-3">
-              <label class="form-label text-secondary">Seleccionar Artículo Existente</label>
-              <select id="aseo-select" class="form-select bg-black text-light border-secondary" required></select>
+              <label class="form-label small fw-semibold">Seleccionar Artículo Existente</label>
+              <select id="aseo-select" class="form-select" required></select>
             </div>
             <div id="div-aseo-nuevo" class="mb-3" style="display: none;">
-              <label class="form-label text-warning fw-bold">Nombre del Nuevo Artículo</label>
-              <input type="text" id="aseo-nombre-nuevo" class="form-control bg-black text-light border-warning">
+              <label class="form-label small text-primary fw-bold">Nombre del Nuevo Artículo</label>
+              <input type="text" id="aseo-nombre-nuevo" class="form-control border-primary">
             </div>
             <div class="mb-3">
-              <label class="form-label text-secondary">Cantidad a Sumar</label>
-              <input type="number" id="aseo-cantidad" class="form-control bg-black text-light border-secondary" value="1" min="1" required>
+              <label class="form-label small fw-semibold">Cantidad a Sumar</label>
+              <input type="number" id="aseo-cantidad" class="form-control" value="1" min="1" required>
             </div>
             <div class="mb-3">
-              <label class="form-label text-secondary">Precio Unitario ($ CLP)</label>
-              <input type="number" id="aseo-precio" class="form-control bg-black text-light border-secondary" value="5000" min="0">
+              <label class="form-label small fw-semibold">Precio Unitario ($ CLP)</label>
+              <input type="number" id="aseo-precio" class="form-control" value="5000" min="0">
             </div>
             <div class="mb-3">
-              <label class="form-label text-secondary">Uso y Aplicación</label>
-              <input type="text" id="aseo-pauta" class="form-control bg-black text-light border-secondary" value="Higienización e insumos de limpieza">
+              <label class="form-label small fw-semibold">Uso y Aplicación</label>
+              <input type="text" id="aseo-pauta" class="form-control" value="Higienización e insumos de limpieza">
             </div>
           </div>
-          <div class="modal-footer border-secondary">
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
-            <button type="submit" class="btn btn-success fw-bold">Guardar</button>
+          <div class="modal-footer bg-light rounded-bottom-4">
+            <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+            <button type="submit" class="btn btn-role-primary btn-sm px-3">Guardar</button>
           </div>
         </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Flotante de Retroalimentación -->
+  <div class="toast-container position-fixed bottom-0 end-0 p-3" style="z-index: 1080;">
+    <div id="clinicToast" class="toast align-items-center text-bg-dark border-0 rounded-3 shadow" role="alert">
+      <div class="d-flex">
+        <div id="clinicToastBody" class="toast-body fw-semibold">Acción completada.</div>
+        <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
       </div>
     </div>
   </div>

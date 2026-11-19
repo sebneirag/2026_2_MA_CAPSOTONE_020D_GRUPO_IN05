@@ -1,5 +1,4 @@
 const express = require('express');
-const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const os = require('os');
 const cors = require('cors');
@@ -25,18 +24,108 @@ function getLocalIpAddress() {
 
 const LOCAL_IP = getLocalIpAddress();
 
-// Conexión a SQLite
-const db = new sqlite3.Database('./clinica_vital.db', (err) => {
-  if (err) {
-    console.error('Error SQLite:', err.message);
-  } else {
-    console.log('Base de datos clinica_vital.db conectada correctamente.');
-    inicializarBD();
-  }
-});
+// ============================================================================
+// CONEXIÓN DUAL A SQLITE (Render Cloud + Motor Nativo Node.js v26 Local)
+// ============================================================================
+let db;
+try {
+  const sqlite3 = require('sqlite3').verbose();
+  db = new sqlite3.Database('./clinica_vital.db', (err) => {
+    if (err) {
+      console.error('Error SQLite:', err.message);
+    } else {
+      console.log('Base de datos clinica_vital.db conectada correctamente.');
+      inicializarBD();
+    }
+  });
+} catch (e) {
+  const { DatabaseSync } = require('node:sqlite');
+  const ndb = new DatabaseSync('./clinica_vital.db');
+  db = {
+    run(sql, params, cb) {
+      if (typeof params === 'function') { cb = params; params = []; }
+      try {
+        const info = ndb.prepare(sql).run(...(params || []));
+        if (cb) cb.call({ lastID: Number(info.lastInsertRowid || 0), changes: Number(info.changes || 0) }, null);
+      } catch (err) {
+        if (cb) cb(err);
+      }
+    },
+    get(sql, params, cb) {
+      if (typeof params === 'function') { cb = params; params = []; }
+      try {
+        const row = ndb.prepare(sql).get(...(params || []));
+        if (cb) cb(null, row);
+      } catch (err) {
+        if (cb) cb(err, null);
+      }
+    },
+    all(sql, params, cb) {
+      if (typeof params === 'function') { cb = params; params = []; }
+      try {
+        const rows = ndb.prepare(sql).all(...(params || []));
+        if (cb) cb(null, rows);
+      } catch (err) {
+        if (cb) cb(err, []);
+      }
+    },
+    prepare(sql) {
+      const stmt = ndb.prepare(sql);
+      return {
+        run(...args) {
+          const cb = typeof args[args.length - 1] === 'function' ? args.pop() : null;
+          try {
+            const info = stmt.run(...args);
+            if (cb) cb.call({ lastID: Number(info.lastInsertRowid || 0) }, null);
+          } catch (err) {
+            if (cb) cb(err);
+          }
+        },
+        finalize(cb) { if (cb) cb(null); }
+      };
+    }
+  };
+  console.log('Base de datos clinica_vital.db conectada (Motor Nativo Node 26).');
+  setImmediate(inicializarBD);
+}
 
 function inicializarBD() {
-  // 1. Tabla Inventario
+  // 1. Tabla Usuarios y Permisos Granulares (Controlada por Administrador)
+  db.run(`
+    CREATE TABLE IF NOT EXISTS usuarios (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT UNIQUE NOT NULL,
+      password TEXT NOT NULL,
+      nombre_completo TEXT NOT NULL,
+      cargo TEXT NOT NULL,
+      tema_visual TEXT NOT NULL DEFAULT 'tens',
+      perm_medicamentos INTEGER DEFAULT 0,
+      perm_aseo INTEGER DEFAULT 0,
+      perm_pacientes INTEGER DEFAULT 0,
+      perm_editar_pacientes INTEGER DEFAULT 0,
+      perm_agregar_stock INTEGER DEFAULT 0,
+      perm_supervision INTEGER DEFAULT 0,
+      es_sistema INTEGER DEFAULT 0,
+      fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `, () => {
+    db.get('SELECT COUNT(*) as total FROM usuarios', (err, row) => {
+      if (row && row.total === 0) {
+        const stmt = db.prepare(`
+          INSERT INTO usuarios 
+          (username, password, nombre_completo, cargo, tema_visual, perm_medicamentos, perm_aseo, perm_pacientes, perm_editar_pacientes, perm_agregar_stock, perm_supervision, es_sistema)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        stmt.run('admin', 'admin123', 'Administrador General', 'Dirección y Supervisión', 'admin', 1, 1, 1, 1, 1, 1, 1);
+        stmt.run('tens', 'tens123', 'TENS 1 (Enfermería)', 'TENS de Turno Clínico', 'tens', 1, 0, 1, 0, 0, 0, 0);
+        stmt.run('AA', 'AA123', 'TENS AA (Aseo y Apoyo)', 'Auxiliar de Aseo y Apoyo', 'aa', 0, 1, 0, 0, 0, 0, 0);
+        stmt.finalize();
+        console.log('Usuarios iniciales creados en base de datos.');
+      }
+    });
+  });
+
+  // 2. Tabla Inventario
   db.run(`
     CREATE TABLE IF NOT EXISTS inventario (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -77,7 +166,7 @@ function inicializarBD() {
     });
   });
 
-  // 2. Tabla Personal
+  // 3. Tabla Personal y Turnos
   db.run(`
     CREATE TABLE IF NOT EXISTS personal (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -103,7 +192,7 @@ function inicializarBD() {
     });
   });
 
-  // 3. Tabla Historial de Consumo
+  // 4. Tabla Historial de Consumo
   db.run(`
     CREATE TABLE IF NOT EXISTS historial_consumo (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -115,7 +204,7 @@ function inicializarBD() {
     )
   `);
 
-  // 4. Tabla Mensajes TENS
+  // 5. Tabla Mensajes TENS
   db.run(`
     CREATE TABLE IF NOT EXISTS mensajes_tens (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -127,7 +216,7 @@ function inicializarBD() {
     )
   `);
 
-  // 5. Tabla Pacientes (Creación y Migración Preventiva)
+  // 6. Tabla Pacientes
   db.run(`
     CREATE TABLE IF NOT EXISTS pacientes (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -160,7 +249,132 @@ app.get('/api/config', (req, res) => {
   res.json({ ip: LOCAL_IP, port: PORT });
 });
 
-// APIs Pacientes (CRUD)
+// ============================================================================
+// AUTENTICACIÓN Y GESTIÓN DE USUARIOS / PERMISOS POR ADMINISTRADOR
+// ============================================================================
+app.post('/api/login', (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) {
+    return res.status(400).json({ success: false, message: 'Ingrese usuario y contraseña.' });
+  }
+
+  db.get(
+    'SELECT * FROM usuarios WHERE LOWER(TRIM(username)) = LOWER(TRIM(?)) AND password = ?',
+    [username, password],
+    (err, user) => {
+      if (err) return res.status(500).json({ success: false, message: 'Error interno del servidor.' });
+      if (!user) {
+        return res.status(401).json({ success: false, message: 'Credenciales incorrectas o usuario revocado.' });
+      }
+
+      const roleGeneral = user.perm_supervision === 1 ? 'admin' : 'usuario';
+      res.json({
+        success: true,
+        id: user.id,
+        role: roleGeneral,
+        userKey: user.username,
+        nombreUsuario: user.nombre_completo,
+        cargo: user.cargo,
+        temaVisual: user.tema_visual || 'tens',
+        permisos: {
+          medicamentos: user.perm_medicamentos === 1,
+          aseo: user.perm_aseo === 1,
+          pacientes: user.perm_pacientes === 1,
+          editar_pacientes: user.perm_editar_pacientes === 1,
+          agregar_stock: user.perm_agregar_stock === 1,
+          supervision: user.perm_supervision === 1
+        }
+      });
+    }
+  );
+});
+
+app.get('/api/usuarios', (req, res) => {
+  db.all(
+    `SELECT id, username, nombre_completo, cargo, tema_visual,
+            perm_medicamentos, perm_aseo, perm_pacientes,
+            perm_editar_pacientes, perm_agregar_stock, perm_supervision,
+            es_sistema, datetime(fecha_creacion, 'localtime') as fecha_creacion
+     FROM usuarios ORDER BY es_sistema DESC, id ASC`,
+    [],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(rows);
+    }
+  );
+});
+
+app.post('/api/usuarios', (req, res) => {
+  const {
+    username,
+    password,
+    nombre_completo,
+    cargo,
+    tema_visual,
+    perm_medicamentos,
+    perm_aseo,
+    perm_pacientes,
+    perm_editar_pacientes,
+    perm_agregar_stock,
+    perm_supervision
+  } = req.body;
+
+  if (!username || !password || !nombre_completo) {
+    return res.status(400).json({ error: 'Usuario, contraseña y nombre completo son obligatorios.' });
+  }
+
+  const userClean = username.trim();
+  const temaClean = ['admin', 'tens', 'aa'].includes(tema_visual) ? tema_visual : 'tens';
+
+  db.get('SELECT id FROM usuarios WHERE LOWER(TRIM(username)) = LOWER(?)', [userClean], (err, existing) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (existing) {
+      return res.status(400).json({ error: `El nombre de usuario "${userClean}" ya existe en el sistema.` });
+    }
+
+    db.run(
+      `INSERT INTO usuarios 
+       (username, password, nombre_completo, cargo, tema_visual, perm_medicamentos, perm_aseo, perm_pacientes, perm_editar_pacientes, perm_agregar_stock, perm_supervision, es_sistema)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+      [
+        userClean,
+        password.trim(),
+        nombre_completo.trim(),
+        (cargo || 'Personal Clínico').trim(),
+        temaClean,
+        perm_medicamentos ? 1 : 0,
+        perm_aseo ? 1 : 0,
+        perm_pacientes ? 1 : 0,
+        perm_editar_pacientes ? 1 : 0,
+        perm_agregar_stock ? 1 : 0,
+        perm_supervision ? 1 : 0
+      ],
+      function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true, id: this.lastID });
+      }
+    );
+  });
+});
+
+app.delete('/api/usuarios/:id', (req, res) => {
+  const { id } = req.params;
+  db.get('SELECT * FROM usuarios WHERE id = ?', [id], (err, user) => {
+    if (err || !user) return res.status(404).json({ error: 'Usuario no encontrado.' });
+    if (user.es_sistema === 1) {
+      return res.status(403).json({ error: 'No se puede eliminar la cuenta raíz de Administrador del sistema.' });
+    }
+
+    db.run('DELETE FROM usuarios WHERE id = ?', [id], function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ success: true });
+    });
+  });
+});
+
+// ============================================================================
+// APIs PACIENTES (CRUD) Y VISTA MÓVIL QR (/ficha/:id)
+// ============================================================================
 app.get('/api/pacientes', (req, res) => {
   db.all('SELECT * FROM pacientes ORDER BY id ASC', [], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -209,7 +423,6 @@ app.delete('/api/pacientes/:id', (req, res) => {
   });
 });
 
-// VISTA COMPLETA AL ESCANEAR EL QR: Muestra la Ficha Gráfica y Opciones de Descarga
 app.get('/ficha/:id', (req, res) => {
   const id = req.params.id;
   db.get('SELECT * FROM pacientes WHERE id = ?', [id], (err, paciente) => {
@@ -217,11 +430,14 @@ app.get('/ficha/:id', (req, res) => {
       return res.status(404).send(`
         <!DOCTYPE html>
         <html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Ficha No Encontrada</title>
+        <title>Ficha No Encontrada - Clínica Vital SpA</title>
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-        </head><body class="bg-dark text-light text-center p-5">
-          <h3>⚠️ Ficha Clínica No Encontrada</h3>
-          <p class="text-secondary">El código QR escaneado no pertenece a una paciente activa o ha sido dada de alta.</p>
+        </head><body style="background:#f8fafc;color:#0f172a;" class="d-flex align-items-center justify-content-center min-vh-100 p-4">
+          <div class="bg-white border rounded-4 shadow-sm p-5 text-center" style="max-width:480px;">
+            <div class="fs-1 mb-2">⚠️</div>
+            <h3 class="fw-bold text-danger">Ficha Clínica No Encontrada</h3>
+            <p class="text-secondary mb-0">El código QR escaneado no pertenece a una residente activa o ha sido dada de alta del sistema.</p>
+          </div>
         </body></html>
       `);
     }
@@ -238,46 +454,47 @@ app.get('/ficha/:id', (req, res) => {
         <title>Ficha Clínica Digital - ${paciente.nombre}</title>
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
         <style>
-          body { background-color: #0f172a; color: #f8fafc; padding: 15px; font-family: system-ui, -apple-system, sans-serif; }
-          .card-ficha { background-color: #1e293b; border: 1px solid #334155; border-radius: 14px; padding: 20px; margin: 0 auto; max-width: 650px; text-align: left; }
-          .badge-clinica { background-color: #0284c7; color: #fff; font-size: 0.85rem; padding: 6px 14px; border-radius: 20px; font-weight: bold; }
-          .img-ficha { width: 100%; border-radius: 10px; border: 2px solid #475569; background-color: #0f172a; }
+          body { background: linear-gradient(135deg, #f0f9ff 0%, #f8fafc 100%); color: #0f172a; padding: 16px; font-family: system-ui, -apple-system, sans-serif; }
+          .card-ficha { background-color: #ffffff; border: 1px solid #e2e8f0; border-top: 5px solid #0284c7; border-radius: 18px; padding: 24px; margin: 0 auto; max-width: 680px; }
+          .badge-clinica { background-color: #e0f2fe; color: #0369a1; font-size: 0.82rem; padding: 6px 14px; border-radius: 20px; font-weight: 700; border: 1px solid #bae6fd; }
+          .data-strip { background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px 16px; }
+          .img-ficha { width: 100%; border-radius: 12px; border: 1px solid #cbd5e1; background-color: #ffffff; }
         </style>
       </head>
       <body>
         <div class="container my-2">
-          <div class="card-ficha shadow-lg">
-            <div class="d-flex justify-content-between align-items-center mb-3">
-              <span class="badge-clinica">📋 CLÍNICA VITAL SpA — FICHA CLÍNICA DIGITAL</span>
-              <span class="badge bg-success">Residente Activa</span>
+          <div class="card-ficha shadow-sm">
+            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+              <span class="badge-clinica">🏥 CLÍNICA VITAL SpA — FICHA CLÍNICA DIGITAL</span>
+              <span class="badge bg-success-subtle text-success border border-success-subtle px-3 py-2 rounded-pill">● Residente Activa</span>
             </div>
 
-            <h3 class="fw-bold text-light mb-1">${paciente.nombre}</h3>
-            <p class="text-info small mb-3">
-              <strong>RUT:</strong> ${paciente.rut} &nbsp;|&nbsp; 
-              <strong>Edad:</strong> ${paciente.edad} Años &nbsp;|&nbsp; 
-              <strong>Diagnóstico:</strong> <span class="text-warning fw-bold">${paciente.diagnostico}</span>
-            </p>
+            <h3 class="fw-bold text-dark mb-2">${paciente.nombre}</h3>
+            <div class="data-strip mb-3 d-flex flex-wrap gap-3 small">
+              <div><span class="text-secondary">RUT:</span> <strong class="text-dark">${paciente.rut}</strong></div>
+              <div><span class="text-secondary">Edad:</span> <strong class="text-primary">${paciente.edad} Años</strong></div>
+              <div><span class="text-secondary">Diagnóstico:</span> <strong class="text-danger">${paciente.diagnostico}</strong></div>
+            </div>
 
-            <div class="mb-3 text-center">
-              <img src="${rutaImagen}" onerror="this.src='/images/ficha1.png'" class="img-ficha shadow" alt="Ficha Clínica de ${paciente.nombre}">
+            <div class="mb-4 text-center">
+              <img src="${rutaImagen}" onerror="this.src='/images/ficha1.png'" class="img-ficha shadow-sm" alt="Ficha Clínica de ${paciente.nombre}">
             </div>
 
             <div class="row g-2">
               <div class="col-6">
-                <a href="${rutaImagen}" download="${paciente.nombre.replace(/\s+/g, '_')}_Ficha.png" class="btn btn-success w-100 fw-bold py-2">
+                <a href="${rutaImagen}" download="${paciente.nombre.replace(/\s+/g, '_')}_Ficha.png" class="btn btn-primary w-100 fw-bold py-2 shadow-sm">
                   📥 Descargar Ficha
                 </a>
               </div>
               <div class="col-6">
-                <a href="${rutaImagen}" target="_blank" class="btn btn-outline-info w-100 fw-bold py-2">
+                <a href="${rutaImagen}" target="_blank" class="btn btn-outline-primary w-100 fw-bold py-2">
                   🔍 Ver Imagen HD
                 </a>
               </div>
             </div>
 
-            <div class="mt-3 text-center">
-              <button onclick="window.print()" class="btn btn-secondary btn-sm w-100">🖨️ Imprimir Documento</button>
+            <div class="mt-2 text-center">
+              <button onclick="window.print()" class="btn btn-light border text-secondary btn-sm w-100 py-2">🖨️ Imprimir Documento Clínico</button>
             </div>
           </div>
         </div>
@@ -288,7 +505,9 @@ app.get('/ficha/:id', (req, res) => {
   });
 });
 
-// APIs Complementarias de Inventario, Supervisión, Consumo y Login
+// ============================================================================
+// APIs INVENTARIO, SUPERVISIÓN, REPORTES Y MONITOREO REMOTO EN TIEMPO REAL
+// ============================================================================
 app.get('/api/inventario', (req, res) => {
   db.all('SELECT * FROM inventario ORDER BY id ASC', [], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -411,6 +630,19 @@ app.get('/api/consumo/semanal', (req, res) => {
   });
 });
 
+app.get('/api/actividad/reciente', (req, res) => {
+  const sql = `
+    SELECT id, producto_nombre, categoria, cantidad, usuario, datetime(fecha, 'localtime') as fecha_local
+    FROM historial_consumo
+    ORDER BY id DESC
+    LIMIT 15
+  `;
+  db.all(sql, [], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows);
+  });
+});
+
 app.post('/api/mensajes', (req, res) => {
   const { tipo, mensaje, usuario } = req.body;
   if (!mensaje || !mensaje.trim()) return res.status(400).json({ error: 'Mensaje vacío.' });
@@ -432,6 +664,9 @@ app.get('/api/mensajes', (req, res) => {
   });
 });
 
+// ============================================================================
+// APIs GESTIÓN DE TURNOS EN TIEMPO REAL (CREAR, EDITAR, ELIMINAR)
+// ============================================================================
 app.get('/api/personal', (req, res) => {
   db.all('SELECT * FROM personal ORDER BY id ASC', [], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -439,19 +674,63 @@ app.get('/api/personal', (req, res) => {
   });
 });
 
-app.post('/api/login', (req, res) => {
-  const { username, password } = req.body;
-  if (username === 'admin' && password === 'admin123') {
-    res.json({ success: true, role: 'admin', nombreUsuario: 'Administrador', userKey: 'admin' });
-  } else if (username === 'tens' && password === 'tens123') {
-    res.json({ success: true, role: 'usuario', nombreUsuario: 'TENS 1', userKey: 'tens' });
-  } else if (username === 'AA' && password === 'AA123') {
-    res.json({ success: true, role: 'usuario', nombreUsuario: 'TENS AA', userKey: 'AA' });
-  } else {
-    res.status(401).json({ success: false, message: 'Credenciales incorrectas' });
+app.post('/api/personal', (req, res) => {
+  const { nombre, rol, area, horario, colacion, dias } = req.body;
+  if (!nombre || !rol || !horario || !dias) {
+    return res.status(400).json({ error: 'Nombre, cargo, horario y días son obligatorios.' });
   }
+
+  db.run(
+    'INSERT INTO personal (nombre, rol, area, horario, colacion, dias, estado) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [
+      nombre.trim(),
+      rol.trim(),
+      (area || 'Enfermería y Fármacos').trim(),
+      horario.trim(),
+      (colacion || '13:30 - 14:30 hrs').trim(),
+      dias.trim(),
+      'En Turno'
+    ],
+    function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ success: true, id: this.lastID });
+    }
+  );
+});
+
+app.put('/api/personal/:id', (req, res) => {
+  const { id } = req.params;
+  const { nombre, rol, area, horario, colacion, dias } = req.body;
+  if (!nombre || !rol || !horario || !dias) {
+    return res.status(400).json({ error: 'Complete todos los campos del turno.' });
+  }
+
+  db.run(
+    'UPDATE personal SET nombre = ?, rol = ?, area = ?, horario = ?, colacion = ?, dias = ? WHERE id = ?',
+    [
+      nombre.trim(),
+      rol.trim(),
+      (area || 'Enfermería y Fármacos').trim(),
+      horario.trim(),
+      (colacion || '13:30 - 14:30 hrs').trim(),
+      dias.trim(),
+      id
+    ],
+    function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ success: true });
+    }
+  );
+});
+
+app.delete('/api/personal/:id', (req, res) => {
+  const { id } = req.params;
+  db.run('DELETE FROM personal WHERE id = ?', [id], function(err) {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ success: true });
+  });
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Servidor Clínica Vital activo en puerto ${PORT}`);
+  console.log(`Servidor Clínica Vital activo en: http://localhost:${PORT}/login.html`);
 });
