@@ -3,16 +3,22 @@ process.env.TZ = 'America/Santiago';
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
+const { createClient } = require('@libsql/client');
 
 let sqlite3 = null;
 let DatabaseSync = null;
-let motorBD = 'sqlite3';
+let motorBD = 'Turso Cloud (LibSQL)';
 
-try {
-  sqlite3 = require('sqlite3').verbose();
-} catch (err) {
-  ({ DatabaseSync } = require('node:sqlite'));
-  motorBD = 'node:sqlite (integrado)';
+const usaTurso = Boolean(process.env.TURSO_DATABASE_URL && process.env.TURSO_AUTH_TOKEN);
+
+if (!usaTurso) {
+  try {
+    sqlite3 = require('sqlite3').verbose();
+    motorBD = 'sqlite3 (local)';
+  } catch (err) {
+    ({ DatabaseSync } = require('node:sqlite'));
+    motorBD = 'node:sqlite (local)';
+  }
 }
 
 const app = express();
@@ -135,15 +141,27 @@ app.get('/api/stream', (req, res) => {
 });
 
 // ============================================================================
-// 3. BASE DE DATOS SQLITE (SE CREA Y PUEBLA AUTOMÁTICAMENTE AL INICIAR)
+// 3. BASE DE DATOS PERSISTENTE (TURSO EN NUBE / SQLITE LOCAL DE RESPALDO)
 // ============================================================================
 const nombreArchivoBD = fs.existsSync(path.join(__dirname, 'database.db')) ? 'database.db' : 'clinica.db';
 const rutaBD = path.join(__dirname, nombreArchivoBD);
 
-const db = sqlite3 ? new sqlite3.Database(rutaBD) : null;
-const dbNativa = !sqlite3 ? new DatabaseSync(rutaBD) : null;
+const tursoClient = usaTurso
+  ? createClient({
+      url: process.env.TURSO_DATABASE_URL,
+      authToken: process.env.TURSO_AUTH_TOKEN
+    })
+  : null;
 
-function runAsync(sql, params = []) {
+const db = !usaTurso && sqlite3 ? new sqlite3.Database(rutaBD) : null;
+const dbNativa = !usaTurso && !sqlite3 ? new DatabaseSync(rutaBD) : null;
+
+async function runAsync(sql, params = []) {
+  if (tursoClient) {
+    const res = await tursoClient.execute({ sql, args: params });
+    const lastId = res.lastInsertRowid !== undefined ? Number(res.lastInsertRowid) : null;
+    return { lastID: lastId, lastInsertRowid: lastId, rowsAffected: res.rowsAffected };
+  }
   if (db) {
     return new Promise((resolve, reject) => {
       db.run(sql, params, function (err) {
@@ -155,7 +173,11 @@ function runAsync(sql, params = []) {
   return Promise.resolve(dbNativa.prepare(sql).run(...params));
 }
 
-function getAsync(sql, params = []) {
+async function getAsync(sql, params = []) {
+  if (tursoClient) {
+    const res = await tursoClient.execute({ sql, args: params });
+    return res.rows[0] ? { ...res.rows[0] } : undefined;
+  }
   if (db) {
     return new Promise((resolve, reject) => {
       db.get(sql, params, (err, row) => {
@@ -167,7 +189,11 @@ function getAsync(sql, params = []) {
   return Promise.resolve(dbNativa.prepare(sql).get(...params));
 }
 
-function allAsync(sql, params = []) {
+async function allAsync(sql, params = []) {
+  if (tursoClient) {
+    const res = await tursoClient.execute({ sql, args: params });
+    return res.rows.map(r => ({ ...r }));
+  }
   if (db) {
     return new Promise((resolve, reject) => {
       db.all(sql, params, (err, rows) => {
@@ -937,7 +963,7 @@ inicializarBaseDatos()
       const st = obtenerAhoraChile();
       console.log(`✅ Servidor Clínica Vital SpA activo en http://localhost:${PORT}`);
       console.log(`🇨🇱 Hora Oficial Santiago, Chile (24h): ${st.fechaHora24} hrs`);
-      console.log(`🗄️ Base de datos creada/conectada: ${nombreArchivoBD} (Motor: ${motorBD})`);
+      console.log(`🗄️ Base de datos conectada: ${usaTurso ? 'Turso Cloud' : nombreArchivoBD} (Motor: ${motorBD})`);
     });
   })
   .catch(err => {
