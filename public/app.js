@@ -142,6 +142,7 @@ function formatearFechaHoraSantiago24(valorFecha) {
 // SINCRONIZACIÓN LITERAL EN TIEMPO REAL (SSE + CANAL LOCAL + POLLING 1.5s)
 // ============================================================================
 let listaPersonalCache = [];
+let inventarioCache = [];
 let filtroTurnoActual = 'todos';
 
 let cacheFaltantes = [];
@@ -260,20 +261,20 @@ function aplicarTemaYPermisos() {
 
   const lblRol = document.getElementById('lbl-rol');
   const heroTitulo = document.getElementById('hero-titulo');
-  const heroSub = document.getElementById('hero-subtitulo');
+  const heroSubtitulo = document.getElementById('hero-subtitulo');
 
   if (temaVisual === 'admin') {
     lblRol.textContent = `🛡️ Dirección y Supervisión · ${userName}`;
     heroTitulo.textContent = `Panel Ejecutivo — ${userName}`;
-    heroSub.textContent = 'Control integral de inventario, finanzas ($ CLP), gestión de personal, turnos y monitoreo en tiempo real.';
+    heroSubtitulo.textContent = 'Control integral de inventario, finanzas ($ CLP), gestión de personal, turnos y monitoreo en tiempo real.';
   } else if (temaVisual === 'aa') {
     lblRol.textContent = `🧼 Aseo e Higiene · ${userName}`;
     heroTitulo.textContent = `Área de Higiene y Apoyo Operativo — ${userName}`;
-    heroSub.textContent = 'Gestión de insumos de sanitización clínica, turnos activos y reporte directo a jefatura.';
+    heroSubtitulo.textContent = 'Gestión de insumos de sanitización clínica, turnos activos y reporte directo a jefatura.';
   } else {
     lblRol.textContent = `🩺 Enfermería TENS · ${userName}`;
     heroTitulo.textContent = `Estación Clínica y Enfermería — ${userName}`;
-    heroSub.textContent = 'Administración de psicofármacos por pauta, fichas clínicas QR y coordinación de turnos.';
+    heroSubtitulo.textContent = 'Administración de psicofármacos por pauta, fichas clínicas QR y coordinación de turnos.';
   }
 
   const secMed = document.getElementById('sec-medicamentos');
@@ -900,6 +901,7 @@ async function cargarInventario() {
   try {
     const res = await fetch('/api/inventario');
     const items = await res.json();
+    inventarioCache = items;
 
     const tablaMed = document.getElementById('tabla-medicamentos');
     const tablaAseo = document.getElementById('tabla-aseo');
@@ -1361,7 +1363,13 @@ async function cargarActividadReciente(notificarSiHayNuevo = true) {
 
     if (hayNuevoMovimiento && notificarSiHayNuevo) {
       const horaChile = formatearFechaHoraSantiago24(masReciente.fecha_local);
-      mostrarToast(`📡 Consumo en vivo: ${masReciente.usuario} descontó ${masReciente.cantidad} ${masReciente.producto_nombre} (${horaChile} hrs)`, 'info');
+      const esIngreso = masReciente.tipo_movimiento === 'ingreso' || masReciente.cantidad < 0;
+      const cantAbs = Math.abs(masReciente.cantidad);
+      if (esIngreso) {
+        mostrarToast(`📦 Stock agregado en vivo: ${masReciente.usuario} sumó ${cantAbs} ${masReciente.producto_nombre} (${horaChile} hrs)`, 'success');
+      } else {
+        mostrarToast(`📡 Consumo en vivo: ${masReciente.usuario} descontó ${cantAbs} ${masReciente.producto_nombre} (${horaChile} hrs)`, 'info');
+      }
     }
 
     firmaUltimaActividad = nuevaFirma;
@@ -1369,9 +1377,14 @@ async function cargarActividadReciente(notificarSiHayNuevo = true) {
 
     tbody.innerHTML = '';
     logs.forEach((l, idx) => {
-      const unidad = l.categoria === 'medicamento' ? 'caja' : 'unidad';
+      const unidad = l.categoria === 'medicamento' ? (Math.abs(l.cantidad) === 1 ? 'caja' : 'cajas') : (Math.abs(l.cantidad) === 1 ? 'unidad' : 'unidades');
       const fechaChile24 = formatearFechaHoraSantiago24(l.fecha_local);
       const claseFila = (idx === 0 && hayNuevoMovimiento) ? 'fila-nueva-highlight' : '';
+      const esIngreso = l.tipo_movimiento === 'ingreso' || l.cantidad < 0;
+      const cantAbs = Math.abs(l.cantidad);
+      const badgeCantidad = esIngreso
+        ? `<span class="badge bg-success-subtle text-success border border-success-subtle">+${cantAbs} ${unidad} (Reposición)</span>`
+        : `<span class="badge bg-warning-subtle text-warning-emphasis border">-${cantAbs} ${unidad}</span>`;
 
       tbody.innerHTML += `
         <tr class="${claseFila}">
@@ -1379,7 +1392,7 @@ async function cargarActividadReciente(notificarSiHayNuevo = true) {
           <td class="fw-bold text-primary">${l.usuario}</td>
           <td><span class="badge bg-light text-dark border text-capitalize">${l.categoria}</span></td>
           <td class="fw-semibold text-dark">${l.producto_nombre}</td>
-          <td><span class="badge bg-warning-subtle text-warning-emphasis border">-${l.cantidad} ${unidad}</span></td>
+          <td>${badgeCantidad}</td>
         </tr>
       `;
     });
@@ -1516,8 +1529,15 @@ function poblarSelects(itemsEnBD) {
   const selectAseo = document.getElementById('aseo-select');
   if (!selectMed || !selectAseo) return;
 
-  selectMed.innerHTML = `<option value="">-- Seleccionar medicamento --</option>`;
-  selectAseo.innerHTML = `<option value="">-- Seleccionar artículo de aseo --</option>`;
+  // Conservar lo que el usuario ya seleccionó para que el polling cada 1.5s no lo borre
+  const valorMedPrevio = selectMed.value;
+  const valorAseoPrevio = selectAseo.value;
+
+  selectMed.innerHTML = '';
+  const optDefaultMed = document.createElement('option');
+  optDefaultMed.value = '';
+  optDefaultMed.textContent = '-- Seleccionar medicamento --';
+  selectMed.appendChild(optDefaultMed);
 
   itemsEnBD.filter(item => esMedicamento(item)).forEach(m => {
     const opt = document.createElement('option');
@@ -1525,7 +1545,21 @@ function poblarSelects(itemsEnBD) {
     opt.textContent = `${m.nombre} (Stock actual: ${m.stock} cajas)`;
     selectMed.appendChild(opt);
   });
-  selectMed.innerHTML += `<option value="__NUEVO__">➕ Registrar NUEVO medicamento...</option>`;
+
+  const optNuevoMed = document.createElement('option');
+  optNuevoMed.value = '__NUEVO__';
+  optNuevoMed.textContent = '➕ Registrar NUEVO medicamento...';
+  selectMed.appendChild(optNuevoMed);
+
+  if (valorMedPrevio) {
+    selectMed.value = valorMedPrevio;
+  }
+
+  selectAseo.innerHTML = '';
+  const optDefaultAseo = document.createElement('option');
+  optDefaultAseo.value = '';
+  optDefaultAseo.textContent = '-- Seleccionar artículo de aseo --';
+  selectAseo.appendChild(optDefaultAseo);
 
   itemsEnBD.filter(item => !esMedicamento(item)).forEach(a => {
     const opt = document.createElement('option');
@@ -1533,71 +1567,140 @@ function poblarSelects(itemsEnBD) {
     opt.textContent = `${a.nombre} (Stock actual: ${a.stock} unidades)`;
     selectAseo.appendChild(opt);
   });
-  selectAseo.innerHTML += `<option value="__NUEVO__">➕ Registrar NUEVO artículo...</option>`;
+
+  const optNuevoAseo = document.createElement('option');
+  optNuevoAseo.value = '__NUEVO__';
+  optNuevoAseo.textContent = '➕ Registrar NUEVO artículo...';
+  selectAseo.appendChild(optNuevoAseo);
+
+  if (valorAseoPrevio) {
+    selectAseo.value = valorAseoPrevio;
+  }
 }
 
 document.getElementById('med-select')?.addEventListener('change', (e) => {
   const val = e.target.value;
   const divNuevo = document.getElementById('div-med-nuevo');
   const inputNuevo = document.getElementById('med-nombre-nuevo');
-  if (divNuevo) divNuevo.style.display = val === '__NUEVO__' ? 'block' : 'none';
-  if (inputNuevo) inputNuevo.required = val === '__NUEVO__';
+  const esNuevo = val === '__NUEVO__';
+  if (divNuevo) divNuevo.style.display = esNuevo ? 'block' : 'none';
+  if (inputNuevo) {
+    inputNuevo.required = esNuevo;
+    if (!esNuevo) inputNuevo.value = '';
+  }
+
+  if (val && !esNuevo) {
+    const prod = inventarioCache.find(i => i.nombre === val);
+    if (prod) {
+      if (prod.precio_unitario) document.getElementById('med-precio').value = prod.precio_unitario;
+      if (prod.pauta) document.getElementById('med-pauta').value = prod.pauta;
+    }
+  }
 });
 
 document.getElementById('aseo-select')?.addEventListener('change', (e) => {
   const val = e.target.value;
   const divNuevo = document.getElementById('div-aseo-nuevo');
   const inputNuevo = document.getElementById('aseo-nombre-nuevo');
-  if (divNuevo) divNuevo.style.display = val === '__NUEVO__' ? 'block' : 'none';
-  if (inputNuevo) inputNuevo.required = val === '__NUEVO__';
+  const esNuevo = val === '__NUEVO__';
+  if (divNuevo) divNuevo.style.display = esNuevo ? 'block' : 'none';
+  if (inputNuevo) {
+    inputNuevo.required = esNuevo;
+    if (!esNuevo) inputNuevo.value = '';
+  }
+
+  if (val && !esNuevo) {
+    const prod = inventarioCache.find(i => i.nombre === val);
+    if (prod) {
+      if (prod.precio_unitario) document.getElementById('aseo-precio').value = prod.precio_unitario;
+      if (prod.pauta) document.getElementById('aseo-pauta').value = prod.pauta;
+    }
+  }
 });
 
 document.getElementById('form-med')?.addEventListener('submit', async (e) => {
   e.preventDefault();
-  const selectVal = document.getElementById('med-select').value;
+  const selectEl = document.getElementById('med-select');
+  const selectVal = selectEl.value;
   const nombre = selectVal === '__NUEVO__' ? document.getElementById('med-nombre-nuevo').value.trim() : selectVal;
   if (!nombre) return;
 
   const cantidad = document.getElementById('med-cantidad').value;
   const precio_unitario = document.getElementById('med-precio').value;
   const pauta = document.getElementById('med-pauta').value;
+  const responsableRegistro = `${userName} (${userCargo})`;
+  const st = obtenerAhoraSantiago();
 
   const res = await fetch('/api/inventario/agregar', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ nombre, cantidad, categoria: 'medicamento', pauta, precio_unitario })
+    body: JSON.stringify({
+      nombre,
+      cantidad,
+      categoria: 'medicamento',
+      pauta,
+      precio_unitario,
+      usuario: responsableRegistro,
+      fecha_chile: st.fechaHora24
+    })
   });
 
   const data = await res.json();
   if (data.success) {
+    selectEl.value = '';
+    document.getElementById('med-nombre-nuevo').value = '';
+    document.getElementById('div-med-nuevo').style.display = 'none';
+    document.getElementById('med-cantidad').value = '1';
     bootstrap.Modal.getInstance(document.getElementById('modalAgregarMedicamento')).hide();
     emitirEventoLocalRT('stock');
     await sincronizarTodoEnVivo(true);
-    mostrarToast(`💊 Stock actualizado: ${nombre}`, 'success');
+    mostrarToast(`💊 Stock actualizado: +${cantidad} ${nombre}`, 'success');
   }
 });
 
 document.getElementById('form-aseo')?.addEventListener('submit', async (e) => {
   e.preventDefault();
-  const selectVal = document.getElementById('aseo-select').value;
+  const selectEl = document.getElementById('aseo-select');
+  const selectVal = selectEl.value;
   const nombre = selectVal === '__NUEVO__' ? document.getElementById('aseo-nombre-nuevo').value.trim() : selectVal;
   if (!nombre) return;
 
   const cantidad = document.getElementById('aseo-cantidad').value;
   const precio_unitario = document.getElementById('aseo-precio').value;
   const pauta = document.getElementById('aseo-pauta').value;
+  const responsableRegistro = `${userName} (${userCargo})`;
+  const st = obtenerAhoraSantiago();
 
   const res = await fetch('/api/inventario/agregar', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ nombre, cantidad, categoria: 'aseo', pauta, precio_unitario })
+    body: JSON.stringify({
+      nombre,
+      cantidad,
+      categoria: 'aseo',
+      pauta,
+      precio_unitario,
+      usuario: responsableRegistro,
+      fecha_chile: st.fechaHora24
+    })
   });
 
   const data = await res.json();
   if (data.success) {
+    selectEl.value = '';
+    document.getElementById('aseo-nombre-nuevo').value = '';
+    document.getElementById('div-aseo-nuevo').style.display = 'none';
+    document.getElementById('aseo-cantidad').value = '1';
     bootstrap.Modal.getInstance(document.getElementById('modalAgregarAseo')).hide();
     emitirEventoLocalRT('stock');
     await sincronizarTodoEnVivo(true);
-    mostrarToast(`🧼 Stock actualizado: ${nombre}`, 'success');
+    mostrarToast(`🧼 Stock actualizado: +${cantidad} ${nombre}`, 'success');
+  }
+});
+
+document.getElementById('modalGestionTurno')?.addEventListener('hidden.bs.modal', () => {
+  const modalSuper = document.getElementById('modalSupervision');
+  if (modalSuper && modalSuper.classList.contains('show')) {
+    document.body.classList.add('modal-open');
   }
 });

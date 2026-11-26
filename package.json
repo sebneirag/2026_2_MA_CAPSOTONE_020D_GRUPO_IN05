@@ -1,7 +1,7 @@
 {
   "name": "clinicavitall",
   "version": "1.0.0",
-  "description": "",
+  "description": "TENS 1 (Fármacos + QR): tens / tens123\r TENS AA (Solo Aseo): AA / AA123\r Administrador (Acceso Total): admin / admin123",
   "main": "server.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",

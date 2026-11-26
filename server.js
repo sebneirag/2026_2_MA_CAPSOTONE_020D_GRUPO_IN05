@@ -222,7 +222,8 @@ async function inicializarBaseDatos() {
       precio_unitario INTEGER DEFAULT 0,
       usuario TEXT NOT NULL,
       fecha_local TEXT NOT NULL,
-      fecha_iso TEXT NOT NULL
+      fecha_iso TEXT NOT NULL,
+      tipo_movimiento TEXT DEFAULT 'consumo'
     )
   `);
 
@@ -273,7 +274,8 @@ async function inicializarBaseDatos() {
     "ALTER TABLE inventario ADD COLUMN prioridad TEXT DEFAULT 'Media'",
     "ALTER TABLE inventario ADD COLUMN precio_unitario INTEGER DEFAULT 5000",
     "ALTER TABLE inventario ADD COLUMN es_sos INTEGER DEFAULT 0",
-    "ALTER TABLE consumos ADD COLUMN fecha_iso TEXT DEFAULT ''"
+    "ALTER TABLE consumos ADD COLUMN fecha_iso TEXT DEFAULT ''",
+    "ALTER TABLE consumos ADD COLUMN tipo_movimiento TEXT DEFAULT 'consumo'"
   ];
 
   for (const sql of alteraciones) {
@@ -552,8 +554,8 @@ app.post('/api/inventario/usar', async (req, res) => {
     await runAsync('UPDATE inventario SET stock = ? WHERE id = ?', [nuevoStock, id]);
 
     await runAsync(
-      `INSERT INTO consumos (producto_id, producto_nombre, categoria, cantidad, precio_unitario, usuario, fecha_local, fecha_iso)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO consumos (producto_id, producto_nombre, categoria, cantidad, precio_unitario, usuario, fecha_local, fecha_iso, tipo_movimiento)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'consumo')`,
       [item.id, item.nombre, item.categoria, cant, item.precio_unitario || 0, usuario, fechaRegistro24, ahoraChile.fechaISO]
     );
 
@@ -574,30 +576,50 @@ app.post('/api/inventario/usar', async (req, res) => {
 
 app.post('/api/inventario/agregar', async (req, res) => {
   try {
-    const { nombre, cantidad, categoria, pauta, precio_unitario } = req.body;
+    const { nombre, cantidad, categoria, pauta, precio_unitario, usuario = 'Supervisión / Bodega', fecha_chile } = req.body;
     const cant = parseInt(cantidad, 10) || 1;
     const precio = parseInt(precio_unitario, 10) || 0;
     const cat = (categoria || 'medicamento').toLowerCase();
+    const nombreLimpio = nombre.trim();
+    const ahoraChile = obtenerAhoraChile();
+    const fechaRegistro24 = fecha_chile ? normalizarFechaChile24(fecha_chile) : ahoraChile.fechaHora24;
 
-    const existente = await getAsync('SELECT * FROM inventario WHERE LOWER(nombre) = LOWER(?)', [nombre.trim()]);
+    const existente = await getAsync('SELECT * FROM inventario WHERE LOWER(nombre) = LOWER(?)', [nombreLimpio]);
+    let productoId = null;
+    let precioFinal = precio;
 
     if (existente) {
+      productoId = existente.id;
+      precioFinal = precio > 0 ? precio : existente.precio_unitario;
       const nuevoStock = existente.stock + cant;
       await runAsync(
         `UPDATE inventario SET stock = ?, precio_unitario = ?, pauta = ? WHERE id = ?`,
-        [nuevoStock, precio > 0 ? precio : existente.precio_unitario, pauta || existente.pauta, existente.id]
+        [nuevoStock, precioFinal, pauta || existente.pauta, existente.id]
       );
     } else {
       const stockMin = cat === 'medicamento' ? 10 : 5;
-      await runAsync(
+      const insertRes = await runAsync(
         `INSERT INTO inventario (nombre, categoria, stock, stock_minimo, prioridad, pauta, precio_unitario, es_sos)
          VALUES (?, ?, ?, ?, 'Media', ?, ?, 0)`,
-        [nombre.trim(), cat, cant, stockMin, pauta || 'Uso clínico general', precio]
+        [nombreLimpio, cat, cant, stockMin, pauta || 'Uso clínico general', precioFinal]
       );
+      productoId = insertRes.lastID || insertRes.lastInsertRowid || null;
     }
 
-    emitirCambioTiempoReal('stock', { nombre: nombre.trim(), cantidad: cant });
-    res.json({ success: true });
+    await runAsync(
+      `INSERT INTO consumos (producto_id, producto_nombre, categoria, cantidad, precio_unitario, usuario, fecha_local, fecha_iso, tipo_movimiento)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ingreso')`,
+      [productoId, nombreLimpio, cat, cant, precioFinal, usuario, fechaRegistro24, ahoraChile.fechaISO]
+    );
+
+    emitirCambioTiempoReal('stock', {
+      nombre: nombreLimpio,
+      cantidad: cant,
+      usuario,
+      fecha: fechaRegistro24
+    });
+
+    res.json({ success: true, fecha: fechaRegistro24 });
   } catch (error) {
     console.error('Error agregando stock:', error);
     res.status(500).json({ success: false, error: 'Error al actualizar stock.' });
@@ -612,6 +634,7 @@ app.get('/api/actividad/reciente', async (req, res) => {
     const rows = await allAsync('SELECT * FROM consumos ORDER BY id DESC LIMIT 50');
     const normalizados = rows.map(r => ({
       ...r,
+      tipo_movimiento: r.tipo_movimiento || 'consumo',
       fecha_local: normalizarFechaChile24(r.fecha_local)
     }));
     res.json(normalizados);
@@ -634,7 +657,8 @@ app.get('/api/consumo/semanal', async (req, res) => {
          SUM(cantidad * precio_unitario) AS costo_total_consumo,
          MAX(fecha_local) AS ultima_fecha
        FROM consumos
-       WHERE fecha_iso = '' OR fecha_iso >= ?
+       WHERE (tipo_movimiento IS NULL OR tipo_movimiento = '' OR tipo_movimiento = 'consumo')
+         AND (fecha_iso = '' OR fecha_iso >= ?)
        GROUP BY producto_nombre, categoria, usuario
        ORDER BY MAX(id) DESC`,
       [hace7Dias]
@@ -661,7 +685,8 @@ app.get('/api/supervision/reorden', async (req, res) => {
     const consumos7d = await allAsync(
       `SELECT producto_nombre, SUM(cantidad) AS total
        FROM consumos
-       WHERE fecha_iso = '' OR fecha_iso >= ?
+       WHERE (tipo_movimiento IS NULL OR tipo_movimiento = '' OR tipo_movimiento = 'consumo')
+         AND (fecha_iso = '' OR fecha_iso >= ?)
        GROUP BY producto_nombre`,
       [hace7Dias]
     );
